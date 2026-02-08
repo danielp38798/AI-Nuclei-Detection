@@ -1,0 +1,3405 @@
+# ///////////////////////////////////////////////////////////////
+#
+# BY: WANDERSON M.PIMENTA
+# PROJECT MADE WITH: Qt Designer and PySide6
+# V: 1.0.0
+#
+# This project can be used freely for all uses, as long as they maintain the
+# respective credits only in the Python scripts, any information in the visual
+# interface (GUI) can be modified without any implication.
+#
+# There are limitations on Qt licenses if you want to use your products
+# commercially, I recommend reading them on the official website:
+# https://doc.qt.io/qtforpython/licenses.html
+#
+# ///////////////////////////////////////////////////////////////
+
+# IMPORT QT CORE
+# ///////////////////////////////////////////////////////////////
+from qt_core import *
+from gui.core.functions import Functions
+import os
+import PySide6.QtWidgets as QtWidgets
+from PySide6 import QtCore, QtWidgets
+from PySide6.QtGui import QMovie
+from PySide6.QtCore import Signal, QObject, Qt
+from PySide6.QtWidgets import QMainWindow, QTextEdit, QWidget
+from gui.widgets import PyPushButton
+import json
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.patches import Patch
+import numpy as np
+import re
+import textwrap
+import time
+
+# IMPORT THEME COLORS
+# ///////////////////////////////////////////////////////////////
+from gui.core.json_themes import Themes
+
+# IMPORT WINDOW CLASS
+# ///////////////////////////////////////////////////////////////
+from gui.widgets.py_window.py_window import PyWindow
+from gui.widgets.py_window.styles import Styles
+
+# ANALYSIS Thread
+# ///////////////////////////////////////////////////////////////
+from gui.core.functions import ImportThread, AnalysisThread, StoreResultsThread, GenerateReportThread, ExportThread, DeleteThread, TrainThread
+from gui.core.inference.ModelInterface import ModelInteractor
+
+# IMPORT Thread
+# ///////////////////////////////////////////////////////////////
+import shutil
+import cv2
+from gui.core.inference.ImageTools import ImageCropper
+from gui.uis.windows.main_window.functions_main_window import *
+
+
+# RESULTS VIEWER
+from gui.core.reporting.reporting import Reporting, generate_report_for_trial, generate_report_for_multiple_trials
+
+# IMPORT SETTINGS
+# ///////////////////////////////////////////////////////////////
+from gui.core.json_settings import Settings
+
+# custom progress bar
+from gui.widgets.py_progress_bar import PYProgressBar
+from gui.widgets.py_combo_box.py_combo_box import PyComboBox
+
+# TRAINING
+from gui.core.trainer.trainer import Trainer
+
+# nuclei tool box
+from gui.core.nuclei_annotation_toolbox.nuclei_data_toolbox import NucleiAnnotationToolbox
+
+
+import sys
+import os
+
+import sys
+import ctypes
+import torch
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        # If the application is run as a bundled executable, the PyInstaller
+        # bootloader sets a sys._MEIPASS attribute to the path of the temp folder it
+        # extracts its bundled files to.
+        return sys._MEIPASS
+    else:
+        # Otherwise, just use the directory of the script being run
+        return os.path.dirname(os.path.abspath(__file__))
+
+
+
+class ConsoleStream(QObject):
+    """ A class to redirect stdout and stderr to a QTextEdit widget. """
+    new_text = Signal(str)
+
+    def __init__(self, text_edit_widget):
+        super().__init__()
+        self.text_edit_widget = text_edit_widget
+        self.new_text.connect(self.on_new_text)
+
+    def write(self, text):
+        """ Emit the new text signal. """
+        self.new_text.emit(str(text))
+
+    def flush(self):
+        """ Flush method to comply with file-like object standards (no-op). """
+        pass
+
+    def on_new_text(self, text):
+        """ Append the new text to the QTextEdit widget. """
+        self.text_edit_widget.append(text)
+        self.text_edit_widget.verticalScrollBar().setValue(self.text_edit_widget.verticalScrollBar().maximum())  # Auto-scroll to bottom
+
+class ConsoleWindow(QMainWindow):
+    """ A separate window for displaying the console output. """
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Console Output")
+        self.setGeometry(300, 300, 600, 400)
+
+        # QTextEdit to show console output
+        self.console_output = QTextEdit(self)
+        self.console_output.setReadOnly(True)
+        self.setCentralWidget(self.console_output) # Set the QTextEdit as the central widget
+
+        # Redirect stdout and stderr to the console window's QTextEdit
+        self.console_stream = ConsoleStream(self.console_output)
+        sys.stdout = self.console_stream
+        sys.stderr = self.console_stream
+
+    def closeEvent(self, event):
+        # Restore sys.stdout and sys.stderr
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+
+
+class ResultsViewer(QWidget):
+    """
+    A class to view the generated plots containing the predictions and class labels
+
+    """
+    def __init__(self, parent, trial_path, update_ui=True):
+        super().__init__(parent)
+                        
+
+        #self.setWindowTitle("View Plots")
+        self.trial_path = trial_path  
+        self.themes = Themes().items      
+        self.settings = Settings().items    
+        self.prediction_images = [] 
+        self.json_files = []
+        self.color_dict = {}
+        self.category_name_dict = {}
+        self.figsize = (20, 12)
+
+        self.model_name = self.settings["processing_settings"]["model_selection"]
+        if "Mask R-CNN (ResNet 50 + FPN)" in self.model_name: #or "Mask R-CNN" in model_name:
+            self.model_name = "maskrcnn_resnet50_fpn"
+        elif "Mask R-CNN (ResNeXt 101 + FPN)" in self.model_name:
+            self.model_name = "maskrcnn_resnext101_fpn"
+        elif "Mask R-CNN (ResNet 50 + DC5)" in self.model_name:
+            self.model_name = "maskrcnn_resnet50_dc5"
+        elif "Mask R-CNN (ResNeXt 101 + DC5)" in self.model_name:
+            self.model_name = "maskrcnn_resnext101_dc5"
+        elif "yolov11" in self.model_name or "YOLOv11" in self.model_name:
+            self.model_name = "yolov11"
+
+
+        if update_ui:
+            #self.setGeometry(0, 0, 1500, 1000)
+            self.central_widget = QWidget()
+            #self.setCentralWidget(self.central_widget)
+            self.results_page_layout = QVBoxLayout()
+            #self.central_widget.setLayout(self.layout)
+            
+            self.current_index = 0 # store the current index of the image being processed
+            self.stop_analysis_index = 0 # store the index of the image where the analysis was stopped
+
+
+            self.figure = None
+            self.fig = plt.figure(figsize=self.figsize)
+            ax = self.fig.add_subplot(111)  
+            self.canvas = FigureCanvas(self.fig)
+            self.canvas.draw()
+            self.toolbar = NavigationToolbar(self.canvas, self, False)
+            
+
+            self.results_page_layout.addWidget(self.canvas, 0, Qt.AlignCenter)  # Add the canvas to the results_page_layout
+            self.results_page_layout.addWidget(self.toolbar, 0, Qt.AlignCenter)  # Add the toolbar to the results_page_layout
+            
+            #self.results_page_layout.setGeometry(QRect(0, 0, 1000, 700))
+
+            # Add text underneath the canvas indicating the current index
+            self.index_label = QLabel()
+            self.index_label.setAlignment(Qt.AlignCenter)
+            self.results_page_layout.addWidget(self.index_label)
+            # Define the buttons
+            #self.next_button = QPushButton("Next")
+            if self.settings["language"] == "eng":
+                text = "Next"
+            elif self.settings["language"] == "de":
+                text = "Nächste"
+            self.next_button = PyPushButton(
+                parent=self,
+                text=text,
+                radius=8,
+                color=self.themes["app_color"]["text_foreground"],
+                bg_color=self.themes["app_color"]["dark_one"],
+                bg_color_hover=self.themes["app_color"]["dark_three"],
+                bg_color_pressed=self.themes["app_color"]["dark_four"]
+            )
+            self.next_button.clicked.connect(self.increment_figure_num)
+ 
+
+            if self.settings["language"] == "eng":
+                text = "Previous"
+            elif self.settings["language"] == "de":
+                text = "Vorherige"
+        
+            self.previous_button = PyPushButton(
+                parent=self,
+                text=text,
+                radius=8,
+                color=self.themes["app_color"]["text_foreground"],
+                bg_color=self.themes["app_color"]["dark_one"],
+                bg_color_hover=self.themes["app_color"]["dark_three"],
+                bg_color_pressed=self.themes["app_color"]["dark_four"]
+            )
+            self.previous_button.clicked.connect(self.decrement_figure_num)
+   
+ 
+            # Define the button 
+            button_layout = QHBoxLayout()
+            button_layout.addWidget(self.previous_button)
+            button_layout.addWidget(self.next_button)
+
+            self.results_page_layout.addLayout(button_layout)
+            self.results_page_layout.setAlignment(Qt.AlignCenter)
+            # Set the layout of the central widget
+            self.setLayout(self.results_page_layout)
+            # Check if there are any figures to display
+            self.check_prediction_data()
+
+
+        
+    def load_json(self, file_path):
+        with open(file_path, "r") as file:
+            data = json.load(file)
+        return data
+
+    def check_prediction_data(self):
+        """
+        Check if there are any prediction images to display
+        
+        """
+        results_dir = self.trial_path #os.path.join(os.getcwd(), "image_analysis_results")
+        prediction_dir = os.path.join(results_dir, "predictions")
+        if not os.path.exists(prediction_dir):
+            # show a hint that there are no figures
+            QMessageBox.critical(self.parent, "Error", "No figures to display")
+            # close the window
+            self.close()
+            return
+        else:
+            #self.prediction_images = [os.path.join(prediction_dir, file) for file in os.listdir(prediction_dir) if file.endswith(".png")] 
+
+            # read instances_results.json and get the images which do have entries other than {} in the json file
+            self.prediction_images = []
+            instances_results_path = os.path.join(results_dir, "instances_results.json")
+            if os.path.exists(instances_results_path):
+                instances_results = self.load_json(instances_results_path)
+                # get image_data key
+                image_data = instances_results["image_data"]
+                for image in image_data:
+                    if image_data[image] != {}:
+                        image = image.split(".")[0]
+                        image_file = os.path.join(prediction_dir, f"{image}_prediction.png")
+                        #image_file = os.path.join(prediction_dir, f"{image}_prediction.png")
+                        if image_file not in self.prediction_images:
+                            self.prediction_images.append(image_file)
+
+            if len(self.prediction_images) == 0:
+                # show a hint that there are no figures
+                QMessageBox.critical(self.parent, "Error", "No figures to display")
+                # close the window
+                self.close()
+            if len(self.prediction_images) == 1:
+                self.next_button.setEnabled(False)
+                self.previous_button.setEnabled(False)
+            else:
+                self.next_button.setEnabled(True)
+                self.previous_button.setEnabled(True)
+            
+            # show the first figure
+            self.show_figure()
+
+
+    def get_instances_color_category_json_files(self):
+        results_dir = self.trial_path #os.path.join(os.getcwd(), "image_analysis_results")
+        self.json_files = [file for file in os.listdir(results_dir) if file.endswith(".json")]
+        self.color_dict = {}
+        colors =  [[255, 112,31], [44,153, 168]]
+
+        self.color_dict = {i: color for i, color in enumerate(colors)}
+
+        list_of_files = os.listdir(results_dir)
+
+        if "color_dict.json" in list_of_files:
+            color_dict_path = os.path.join(results_dir, "color_dict.json")
+            self.color_dict = self.load_json(color_dict_path)
+            #print(f"color_dict: {self.color_dict}")
+        if "category_name_dict.json" in list_of_files:
+            category_name_dict_path = os.path.join(results_dir, "category_name_dict.json")
+            self.category_name_dict = self.load_json(category_name_dict_path)
+            #print(f"category_name_dict: {self.category_name_dict}")
+        
+        # sort both color_dict and category_name_dict by the keys
+        self.color_dict = {k: self.color_dict[k] for k in sorted(self.color_dict)}
+        self.category_name_dict = {k: self.category_name_dict[k] for k in sorted(self.category_name_dict)}
+
+        return self.color_dict, self.category_name_dict
+
+    def generate_plot(self, image_file):
+        """
+        Generates one plot for the given image file
+        """
+        self.settings = Settings().items
+        # load the color dict and category name dict
+        self.color_dict, self.category_name_dict = self.get_instances_color_category_json_files()
+        #print(self.category_name_dict)
+        if not self.color_dict or not self.category_name_dict:
+            if self.settings["language"] == "eng":
+                QMessageBox.critical(self, "Error", "Error generating plot. Possibly no instances detected.")
+            else:
+                QMessageBox.critical(self, "Fehler", "Fehler beim Generieren des Diagramms. Möglicherweise keine Instanzen erkannt.")
+            return
+        handles = [Patch(color=np.array(self.color_dict[category_id])/255, label=category_name) for category_id, category_name in self.category_name_dict.items()]
+        image = plt.imread(image_file)
+        # determine the size of the image
+        image_size = image.shape
+        #adapt the size of the plot to the size of the image
+        adapted_figsize = image_size #(image_size[1]/100, image_size[0]/100)
+        
+        # Clear previous plot
+        if hasattr(self, "fig"):
+            self.fig.clear()
+        else:
+            self.fig = plt.figure(figsize=adapted_figsize)
+        ax = self.fig.add_subplot(111)
+        ax.imshow(image)
+        ax.axis("off")
+        # scale the image down if it is too large, so that it fits into the plot
+        """max_width = 2000
+        max_height = 2000
+        if image.shape[0] > max_height or image.shape[1] > max_width:
+            scale_factor = min(max_height/image.shape[0], max_width/image.shape[1])
+            ax.set_xlim([0, image.shape[1]*scale_factor])
+            ax.set_ylim([image.shape[0]*scale_factor, 0])
+       """
+        if self.settings["language"] == "eng":
+            title = "Classes"
+        elif self.settings["language"] == "de":
+            title = "Klassen"
+        legend_1 = ax.legend(title=title, handles=handles, loc="upper left", bbox_to_anchor=(1, 1), fontsize="small")
+        ax.add_artist(legend_1)
+
+        # grab the cell counts and add them as another legend unterneath the classes
+
+        #get unit form settings.items
+        unit = self.settings["processing_settings"]["unit"]
+        hyperparameters_path = os.path.join(self.trial_path, "hyperparameters.json")
+        reporting = Reporting(unit=unit, 
+                              trial_dir=self.trial_path, 
+                              hp_params_path=hyperparameters_path,
+                              language=self.settings["language"],
+                              verbose=False)
+        image_file_name = os.path.basename(image_file).replace("_prediction.png", ".tif")
+
+        if reporting.check_results_file_integrity():
+           # for every class, get the count of the class and add it to the legend
+            count_legend_handles = {category_id : None for category_id in self.category_name_dict.keys() }
+            used_model = reporting.get_used_model_for_analysis()
+
+            for class_id, class_name in self.category_name_dict.items():
+                if "yolo" in used_model:
+                    class_id = int(class_id) +1 
+                    class_id = str(class_id)
+                count_of_classname = reporting.get_count_for_class(image_file_name, class_id)
+                if "yolo" in used_model:
+                    class_id = int(class_id) - 1
+                    class_id = str(class_id)
+                if count_of_classname > 0:
+                    count_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{count_of_classname}")
+        
+            if self.settings["language"] == "eng":
+                text = "Counts"
+            elif self.settings["language"] == "de":
+                text = "Zahlen"
+            count_legend = ax.legend(title=text, handles=count_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.8), fontsize="small")
+            ax.add_artist(count_legend)
+
+            # for every class, get the area taken up by the class and add it to the legend
+            area_legend_handles = {category_id : None for
+                                      category_id in self.category_name_dict.keys() }
+            for class_id, class_name in self.category_name_dict.items():
+                if "yolo" in used_model:
+                    class_id = int(class_id) +1 
+                    class_id = str(class_id)
+                area_of_classname = reporting.get_area_for_class(image_file_name, class_id)
+                if "yolo" in used_model:
+                    class_id = int(class_id) - 1
+                    class_id = str(class_id)
+                if area_of_classname > 0:
+                    if unit == "mm":
+                        area_of_classname = round(area_of_classname, 4)
+                    else:
+                        area_of_classname = round(area_of_classname, 2)
+                    area_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{area_of_classname}")
+
+            if self.settings["language"] == "eng":
+                text = f"Area ({unit}^2)"
+            elif self.settings["language"] == "de":
+                text = f"Fläche ({unit}^2)"
+            area_legend = ax.legend(title=text, handles=area_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.6), fontsize="small")
+            ax.add_artist(area_legend)
+
+            # for every class, get the relative area taken up by the class and add it to the legend
+            relative_area_legend_handles = {category_id : None for
+                                        category_id in self.category_name_dict.keys() }
+            for class_id, class_name in self.category_name_dict.items():
+                if "yolo" in used_model:
+                    class_id = int(class_id) +1 
+                    class_id = str(class_id)
+                relative_area_of_classname = reporting.get_relative_area_for_class(image_file_name, class_id)
+                if "yolo" in used_model:
+                    class_id = int(class_id) - 1
+                    class_id = str(class_id)
+                if relative_area_of_classname > 0:
+                    if unit == "mm":
+                        relative_area_of_classname = round(relative_area_of_classname, 4)
+                    else:
+                        relative_area_of_classname = round(relative_area_of_classname, 2)
+                    relative_area_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{relative_area_of_classname}")
+
+            if self.settings["language"] == "eng":
+                text = "Relative area (%)"
+            elif self.settings["language"] == "de":
+                text = "Relative Fläche (%)"
+            relative_area_legend = ax.legend(title=text, handles=relative_area_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.4), fontsize="small")
+            ax.add_artist(relative_area_legend)
+
+            # for every class, get the density of the class and add it to the legend
+            density_legend_handles = {category_id : None for
+                                        category_id in self.category_name_dict.keys() }
+            for class_id, class_name in self.category_name_dict.items():
+                if "yolo" in used_model:
+                    class_id = int(class_id) +1 
+                    class_id = str(class_id)
+                density_of_classname = reporting.get_density_for_class(image_file_name, class_id)
+                if "yolo" in used_model:
+                    class_id = int(class_id) - 1
+                    class_id = str(class_id)
+                if density_of_classname > 0:
+                    if unit == "mm":
+                        density_of_classname = round(density_of_classname, 4)
+                    else:
+                        density_of_classname = density_of_classname
+                    density_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{density_of_classname}")
+
+            if self.settings["language"] == "eng":
+                text = f"Density (1/{unit}^2)"
+            elif self.settings["language"] == "de":
+                text = f"Dichte ({1/unit}^2)"
+            density_legend = ax.legend(title=text, handles=density_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.2), fontsize="small")
+            ax.add_artist(density_legend)
+            
+        else:
+            print("Error: Unable to get results data")
+        return self.fig
+    
+    def store_results(self):
+        """
+        Generate and store all the plots for the images in the trial
+        """
+        results_dir = self.trial_path #os.path.join(os.getcwd(), "image_analysis_results")
+        prediction_dir = os.path.join(results_dir, "predictions")
+        if not os.path.exists(prediction_dir):
+            # show a hint that there are no figures
+            print("No figures to display")
+        else:
+            prediction_images = [os.path.join(prediction_dir, file) for file in os.listdir(prediction_dir) if file.endswith(".png")] 
+
+            if len(prediction_images) > 0:
+                
+                plots_dir = os.path.join(self.trial_path, "plots")
+                if not os.path.exists(plots_dir):
+                    os.makedirs(plots_dir)
+
+                for image_file in prediction_images:
+                    # if plot already exists, do not save it again
+                    plot_file = image_file.replace(".png", "_plot.png")
+                    #if os.path.exists(plot_file):
+                    #    continue
+                    image = plt.imread(image_file)
+                    # determine the size of the image
+                    #image_size = image.shape
+                    #adapted_figsize = image_size #(image_size[1]/100, image_size[0]/100)
+                    fig = plt.figure(figsize=self.figsize)  
+                    settings = Settings().items
+                    # load the color dict and category name dict
+                    color_dict, category_name_dict = self.get_instances_color_category_json_files()
+                    if not color_dict or not category_name_dict:
+                        if settings["language"] == "eng":
+                            QMessageBox.critical(self, "Error", "Error generating plot. Data is being written. Please wait a few seconds and try again.")
+                        else:
+                            QMessageBox.critical(self, "Fehler", "Fehler beim Generieren des Diagramms. Daten werden geschrieben. Bitte warten Sie einige Sekunden und versuchen Sie es erneut.")
+                        return
+                    handles = [Patch(color=np.array(color_dict[category_id])/255, label=category_name) for category_id, category_name in self.category_name_dict.items()]
+                    
+
+                    ax = fig.add_subplot(111)
+                    ax.imshow(image)
+                    ax.axis("off")
+                    if self.settings["language"] == "eng":
+                        title = "Classes"
+                    elif self.settings["language"] == "de":
+                        title = "Klassen"
+                    legend_1 = ax.legend(title=title, handles=handles, loc="upper left", bbox_to_anchor=(1, 1), fontsize="small")
+                    ax.add_artist(legend_1)
+
+                    #get unit form settings.items
+                    unit = self.settings["processing_settings"]["unit"]
+                    hyperparameters_path = os.path.join(self.trial_path, "hyperparameters.json")
+                    reporting = Reporting(unit=unit, 
+                                        trial_dir=self.trial_path, 
+                                        hp_params_path=hyperparameters_path,
+                                        language=self.settings["language"],
+                                        verbose=False)
+                    image_file_name = os.path.basename(image_file).replace("_prediction.png", ".tif")
+
+                    # generate the plot
+                    if reporting.check_results_file_integrity():
+             
+                        count_legend_handles = {category_id : None for category_id in self.category_name_dict.keys() }
+                        used_model = reporting.get_used_model_for_analysis()
+
+                        for class_id, class_name in self.category_name_dict.items():
+                            if "yolo" in used_model:
+                                class_id = int(class_id) +1 
+                                class_id = str(class_id)
+                            count_of_classname = reporting.get_count_for_class(image_file_name, class_id)
+                            if "yolo" in used_model:
+                                class_id = int(class_id) - 1
+                                class_id = str(class_id)
+                            count_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{count_of_classname}")
+                    
+                        if self.settings["language"] == "eng":
+                            text = "Counts"
+                        elif self.settings["language"] == "de":
+                            text = "Zahlen"
+    
+                        count_legend = ax.legend(title=text, handles=count_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.8), fontsize="small")
+                        ax.add_artist(count_legend)
+
+                        # for every class, get the area taken up by the class and add it to the legend
+                        area_legend_handles = {category_id : None for
+                                                category_id in self.category_name_dict.keys() }
+                        for class_id, class_name in self.category_name_dict.items():
+                            if "yolo" in used_model:
+                                class_id = int(class_id) +1 
+                                class_id = str(class_id)
+                            area_of_classname = reporting.get_area_for_class(image_file_name, class_id)
+                            if "yolo" in used_model:
+                                class_id = int(class_id) - 1
+                                class_id = str(class_id)
+                            if area_of_classname > 0:
+                                if unit == "mm":
+                                    area_of_classname = round(area_of_classname, 4)
+                                else:
+                                    area_of_classname = round(area_of_classname, 2)
+                            area_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{area_of_classname}")
+
+                        if self.settings["language"] == "eng":
+                            text = f"Area ({unit}^2)"
+                        elif self.settings["language"] == "de":
+                            text = f"Fläche ({unit}^2)"
+                        area_legend = ax.legend(title=text, handles=area_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.6), fontsize="small")
+                        ax.add_artist(area_legend)
+
+                        # for every class, get the relative area taken up by the class and add it to the legend
+                        relative_area_legend_handles = {category_id : None for
+                                                    category_id in self.category_name_dict.keys() }
+                        for class_id, class_name in self.category_name_dict.items():
+                            if "yolo" in used_model:
+                                class_id = int(class_id) +1 
+                                class_id = str(class_id)
+                            relative_area_of_classname = reporting.get_relative_area_for_class(image_file_name, class_id)
+                            if "yolo" in used_model:
+                                class_id = int(class_id) - 1
+                                class_id = str(class_id)
+                            if relative_area_of_classname > 0:
+                                if unit == "mm":
+                                    relative_area_of_classname = round(relative_area_of_classname, 4)
+                                else:
+                                    relative_area_of_classname = round(relative_area_of_classname, 2)
+                            relative_area_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{relative_area_of_classname}")
+
+                        if self.settings["language"] == "eng":
+                            text = "Relative area (%)"
+                        elif self.settings["language"] == "de":
+                            text = "Relative Fläche (%)"
+                        relative_area_legend = ax.legend(title=text, handles=relative_area_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.4), fontsize="small")
+                        ax.add_artist(relative_area_legend)
+
+                        # for every class, get the density of the class and add it to the legend
+                        density_legend_handles = {category_id : None for
+                                                    category_id in self.category_name_dict.keys() }
+                        for class_id, class_name in self.category_name_dict.items():
+                            if "yolo" in used_model:
+                                class_id = int(class_id) +1 
+                                class_id = str(class_id)
+                            density_of_classname = reporting.get_density_for_class(image_file_name, class_id)
+                            if "yolo" in used_model:
+                                class_id = int(class_id) - 1
+                                class_id = str(class_id)
+                            if density_of_classname > 0:
+                                if unit == "mm":
+                                    density_of_classname = round(density_of_classname, 4)
+                                else:
+                                    density_of_classname = density_of_classname
+                            density_legend_handles[class_id] = Patch(color=np.array(self.color_dict[class_id])/255, label=f"{density_of_classname}")
+
+                        if self.settings["language"] == "eng":
+                            text = f"Density (1/{unit}^2)"
+                        elif self.settings["language"] == "de":
+                            text = f"Dichte ({1/unit}^2)"
+                        density_legend = ax.legend(title=text, handles=density_legend_handles.values(), loc="upper left", bbox_to_anchor=(1, 0.2), fontsize="small")
+                        ax.add_artist(density_legend)
+
+                    # save the plot
+                    plot_file = image_file.replace(".png", "_plot.png")
+                    plot_path = os.path.join(plots_dir, os.path.basename(plot_file))
+                    fig.savefig(plot_path, dpi=300)
+                    plt.close(fig)
+
+
+
+    def show_figure(self):
+        # Avoid index out of range
+        if self.current_index < 0:
+            self.current_index = 0
+        if self.current_index >= len(self.prediction_images):
+            self.current_index = len(self.prediction_images) - 1
+
+        image_file = self.prediction_images[self.current_index]
+        self.generate_plot(image_file)
+        #self.index_label.setText(f"Plot {self.current_index + 1} of {len(self.prediction_images)}")
+        if self.settings["language"] == "eng":
+            self.index_label.setText(f"Prediction {self.current_index + 1} of {len(self.prediction_images)} \n File: {os.path.basename(image_file).replace('_prediction.png', '.tif')} \n")
+        elif self.settings["language"] == "de":
+            self.index_label.setText(f"Vorhersage {self.current_index + 1} von {len(self.prediction_images)} \n Datei: {os.path.basename(image_file).replace('_prediction.png', '.tif')} \n")
+        self.canvas.draw()
+
+    def increment_figure_num(self):
+        if len(self.prediction_images) == 0:
+            if self.settings["language"] == "eng":
+                QMessageBox.critical(self, "Warning", "No figures generated!", defaultButton=QMessageBox.Ok)
+            elif self.settings["language"] == "de":
+                QMessageBox.critical(self, "Warnung", "Keine Diagramme generiert!", defaultButton=QMessageBox.Ok)
+            print("No figures generated")
+        else:
+            if self.current_index < len(self.prediction_images):
+                self.current_index += 1
+                self.show_figure()
+
+    def decrement_figure_num(self):
+        if len(self.prediction_images) == 0:
+            if self.settings["language"] == "eng":
+                QMessageBox.critical(self, "Warning", "No figures generated!", defaultButton=QMessageBox.Ok)
+            elif self.settings["language"] == "de":
+                QMessageBox.critical(self, "Warnung", "Keine Diagramme generiert!", defaultButton=QMessageBox.Ok)
+            print("No figures generated")
+        else:
+            if self.current_index > 0:
+                self.current_index -= 1
+                self.show_figure()
+
+
+# MAIN PAGES
+class Ui_MainPages(object):
+
+    def _init_(self, ui_object):
+        self.ui = ui_object
+
+ 
+
+    def setupUi(self, MainPages, base_path):
+        if not MainPages.objectName():
+            MainPages.setObjectName(u"MainPages")
+        #MainPages.resize(1000, 700)
+        
+        # Track the visibility state of the console
+        self.console_visible = True
+
+        self.analysis_thread_should_stop = False
+        self.base_path = base_path
+        #print(f"Ui_MainPages --> base_path: {self.base_path}")
+        self.page_to_jump_to = None
+        # LOAD SETTINGS
+        # ///////////////////////////////////////////////////////////////
+        settings = Settings()
+        self.settings = settings.items
+        model_name = self.settings["processing_settings"]["model_selection"]
+        """
+        if "Mask R-CNN (ResNeXt 101)" in model_name:
+            self.model_name = "maskrcnn_resnext101"
+            self.instances_dict = {1: 'nucleus'} # maskrcnn_resnext101 is only trained to detect nuclei
+        elif "Mask R-CNN (ResNet 50)" in model_name:
+            self.model_name = "maskrcnn_resnet50"
+            self.instances_dict = {1: 'nucleus'}
+        elif "yolov8" in model_name or "YOLOv11" in model_name:
+            self.model_name = "yolov11"
+            #self.instances_dict = {1: 'decondensed_nucleus', 2: 'condensed_nucleus'}
+            self.instances_dict = {1: 'nucleus'}
+        """
+        # read the model info from ./application_resources/
+        model_info_path = os.path.join(self.base_path, "application_resources", "models", "model_info.json")
+        with open(model_info_path, "r") as file:
+            self.model_info = json.load(file)
+
+            
+        
+        if "Mask R-CNN (ResNet 50 + FPN)" in model_name: #or "Mask R-CNN" in model_name:
+            model_name = "maskrcnn_resnet50_fpn"
+        elif "Mask R-CNN (ResNeXt 101 + FPN)" in model_name:
+            model_name = "maskrcnn_resnext101_fpn"
+        elif "Mask R-CNN (ResNet 50 + DC5)" in model_name:
+            model_name = "maskrcnn_resnet50_dc5"
+        elif "Mask R-CNN (ResNeXt 101 + DC5)" in model_name:
+            model_name = "maskrcnn_resnext101_dc5"
+        elif "yolov11" in model_name or "YOLOv11" in model_name:
+            model_name = "yolov11"
+
+        else:
+            print("Model not found") 
+        
+        if model_name in self.model_info:
+            self.model_name = model_name
+            self.instances_dict = self.model_info[model_name]["instances"]
+            # convert "1" to int(1) e.g. for the key "1" in the instances_dict
+            self.instances_dict = {int(key): value for key, value in self.instances_dict.items()}
+        else:
+            print("Model not found")
+        
+
+        #self.reporting = Reporting("mm", False) # create an instance of the Reporting class, to get nuclei data
+
+        self.images_file_paths = [] # store the complete paths to the images
+        #self.imported_files_dir = os.path.join(os.getcwd(), "imports") # store the directory where the images are imported
+        self.imported_files_dir = os.path.join(self.base_path, "imports") # store the directory where the images are imported
+        #print(f"imported_files_dir: {self.imported_files_dir}")
+        self.imported_trial_paths = [] # store the paths to the imported trials
+        self.trial_name = "" # store the name of the trial
+        self.current_trial_path = "" # store the path to the current trial
+        self.selected_trial = "" # store the selected trial
+
+        self.results_dir = "" # store the directory where the results are stored
+        self.results_trial_paths = [] # store the paths to the results trials
+        self.results_trial_names = []
+        self.results_trial_names_dict = {}
+        self.results_dict = {} # store the results of the analysis
+
+
+        self.total_images = 0
+        self.prediction_images = [] # store the paths to the prediction images
+        self.current_image_index = 0
+        self.convert_img_to_8bit = True
+        self.import_process_stopped = False
+
+        self.physical_image_width = self.settings["processing_settings"]["image_size"]
+        self.failed_trials = [] # store the trials that failed to generate predictions
+
+
+        self.themes = Themes().items
+        self.main_pages_layout = QVBoxLayout(MainPages)
+        self.main_pages_layout.setSpacing(0)
+        self.main_pages_layout.setObjectName(u"main_pages_layout")
+        self.main_pages_layout.setContentsMargins(5, 5, 5, 5)
+        self.pages = QStackedWidget(MainPages)
+        self.pages.setObjectName(u"pages")
+        
+        # ---- welcome page ---- #
+        self.setup_welcome_page()
+
+        # --- widgets page --- #
+        #self.setup_widgets_page()
+
+        # --- empty page --- #
+        #self.setup_empty_page()
+
+        # --- import page --- #
+        self.setup_import_page()
+
+        # --- analysis page --- #
+        self.setup_analysis_page()
+
+        # --- results viewer --- #
+        self.setup_results_page()
+
+        # --- data management page --- #
+        self.setup_datamanagement_page()
+
+        # --- trainer page --- #
+        #self.setup_trainer_page()
+
+        self.retranslateUi(MainPages)
+        self.pages.setCurrentIndex(0)
+        self.main_pages_layout.addWidget(self.pages)
+        QMetaObject.connectSlotsByName(MainPages)
+
+
+    # ------------------------------ GUI HELPER FUNCTIONS ------------------------------ #
+
+    # SETUP PAGES FUNCTIONS
+    def setup_widgets_page(self):
+
+        self.pages.addWidget(self.welcome_page)
+        self.widgets_page = QWidget()
+        self.widgets_page.setObjectName(u"widgets_page")
+        self.widgets_page_layout = QVBoxLayout(self.widgets_page)
+        self.widgets_page_layout.setSpacing(5)
+        self.widgets_page_layout.setObjectName(u"widgets_page_layout")
+        self.widgets_page_layout.setContentsMargins(5, 5, 5, 5)
+        self.scroll_area = QScrollArea(self.widgets_page)
+        self.scroll_area.setObjectName(u"scroll_area")
+        self.scroll_area.setStyleSheet(u"background: transparent;")
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setWidgetResizable(True)
+        self.contents = QWidget()
+        self.contents.setObjectName(u"contents")
+        self.contents.setGeometry(QRect(0, 0, 840, 580))
+        self.contents.setStyleSheet(u"background: transparent;")
+        self.verticalLayout = QVBoxLayout(self.contents)
+        self.verticalLayout.setSpacing(15)
+        self.verticalLayout.setObjectName(u"verticalLayout")
+        self.verticalLayout.setContentsMargins(5, 5, 5, 5)
+        self.title_label = QLabel(self.contents)
+        self.title_label.setObjectName(u"title_label")
+        self.title_label.setMaximumSize(QSize(16777215, 40))
+        font = QFont()
+        font.setPointSize(16)
+        self.title_label.setFont(font)
+        self.title_label.setStyleSheet(u"font-size: 16pt")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.verticalLayout.addWidget(self.title_label)
+
+        self.description_label = QLabel(self.contents)
+        self.description_label.setObjectName(u"description_label")
+        self.description_label.setAlignment(Qt.AlignHCenter|Qt.AlignTop)
+        self.description_label.setWordWrap(True)
+        self.verticalLayout.addWidget(self.description_label)
+
+        self.row_1_layout = QHBoxLayout()
+        self.row_1_layout.setObjectName(u"row_1_layout")
+        self.verticalLayout.addLayout(self.row_1_layout)
+
+        self.row_2_layout = QHBoxLayout()
+        self.row_2_layout.setObjectName(u"row_2_layout")
+        self.verticalLayout.addLayout(self.row_2_layout)
+
+        self.row_3_layout = QHBoxLayout()
+        self.row_3_layout.setObjectName(u"row_3_layout")
+        self.verticalLayout.addLayout(self.row_3_layout)
+
+        self.row_4_layout = QVBoxLayout()
+        self.row_4_layout.setObjectName(u"row_4_layout")
+        self.verticalLayout.addLayout(self.row_4_layout)
+
+        self.row_5_layout = QVBoxLayout()
+        self.row_5_layout.setObjectName(u"row_5_layout")
+        self.verticalLayout.addLayout(self.row_5_layout)
+        self.scroll_area.setWidget(self.contents)
+        self.widgets_page_layout.addWidget(self.scroll_area)
+
+        self.pages.addWidget(self.widgets_page)
+
+    def setup_welcome_page(self):
+        self.welcome_page = QWidget()
+        self.welcome_page.setObjectName(u"welcome_page")
+        self.welcome_page.setStyleSheet(u"font-size: 14pt")
+        self.welcome_page_layout = QVBoxLayout(self.welcome_page)
+        self.welcome_page_layout.setSpacing(5)
+        self.welcome_page_layout.setObjectName(u"welcome_page_layout")
+        self.welcome_page_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.welcome_base = QFrame(self.welcome_page)
+        self.welcome_base.setObjectName(u"welcome_base")
+        self.welcome_base.setMinimumSize(QSize(400, 200))
+        self.welcome_base.setMaximumSize(QSize(400, 200))
+        self.welcome_base.setFrameShape(QFrame.NoFrame)
+        self.welcome_base.setFrameShadow(QFrame.Raised)
+        
+        self.center_page_layout = QVBoxLayout(self.welcome_base)
+        self.center_page_layout.setSpacing(20)
+        self.center_page_layout.setObjectName(u"center_page_layout")
+        self.center_page_layout.setContentsMargins(0, 0, 0, 0)
+        
+        
+        # PAGE 1 - ADD LOGO TO MAIN PAGE
+        self.logo_png = QLabel(self.welcome_base)
+        self.logo_png.setObjectName(u"logo_png")
+        self.logo_png.setPixmap(QPixmap(Functions.set_image("ai_logo_2.png")))
+        self.logo_png.setAlignment(Qt.AlignCenter)
+        self.center_page_layout.addWidget(self.logo_png)
+
+        self.label = QLabel(self.welcome_base)
+        self.label.setObjectName(u"label")
+        self.label.setAlignment(Qt.AlignCenter)
+        self.center_page_layout.addWidget(self.label)
+        
+
+        self.welcome_page_layout.addWidget(self.welcome_base, Qt.AlignCenter, Qt.AlignCenter)
+
+        # all welcome page to the stack
+        self.pages.addWidget(self.welcome_page)
+
+    # ----- SETUP IMPORT PAGE ----- #
+
+    def setup_import_page(self):
+        """
+        Setup the import page
+        """
+        # --- import page --- #
+        self.import_page = QWidget()
+        self.import_page.setObjectName(u"import_page")
+        self.import_page.setStyleSheet(u"font-size: 14pt")
+        self.import_page_layout = QVBoxLayout(self.import_page)
+        self.import_page_layout.setObjectName(u"import_page_layout")
+        
+        self.import_page_base = QFrame(self.import_page)
+        self.import_page_base.setObjectName(u"import_page_base")
+
+        self.center_page_layout = QVBoxLayout(self.import_page_base)
+        #self.center_page_layout.setSpacing(10)
+        self.center_page_layout.setObjectName(u"center_page_layout")
+        self.center_page_layout.setContentsMargins(0, 0, 0, 0)
+    
+        self.import_page_layout.addWidget(self.import_page_base, 0, Qt.AlignCenter)
+        self.import_page_layout.setAlignment(Qt.AlignCenter)
+
+        
+        # IMPORT LOGO
+        self.import_status_logo = QLabel(self.import_page) 
+        self.import_status_logo.setGeometry(10, 10, 50, 50)
+        pixmap = QPixmap(Functions.set_image("red_cross.png"))
+        self.import_status_logo.setPixmap(pixmap)
+        self.import_status_logo.hide()
+        self.import_status_logo.setObjectName(u"import_status_logo")
+        self.import_status_label = QLabel(self.import_page)
+        self.import_status_label.setObjectName(u"import_hint_label")
+        #self.import_status_label.setText("No images imported yet. \n Click the button below to import images")
+        if self.settings["language"] == "eng":
+            self.import_status_label.setText("No images imported yet. \n Click the button below to import images.")
+        elif self.settings["language"] == "de":
+            self.import_status_label.setText("Noch keine Bilder importiert. \n Klicken Sie auf die Schaltfläche unten, um Bilder zu importieren.")
+        self.import_status_label.setAlignment(Qt.AlignCenter)
+        self.import_status_label.setContentsMargins(0, 0, 0, 0)
+        self.import_status_label.setStyleSheet(u"font-size: 14pt")
+
+        # Add a QlineEdit to let the user set a Trial name /a folder to import the images to
+        self.trial_name_label = QLabel(self.import_page)
+        self.trial_name_label.setGeometry(QRect(0, 0, 200, 40))
+        self.trial_name_label.setObjectName(u"trial_name_label")
+        #self.trial_name_label.setText("Trial Name")
+        if self.settings["language"] == "eng":
+            self.trial_name_label.setText("Trial Name")
+        elif self.settings["language"] == "de":
+            self.trial_name_label.setText("Versuchsname")
+        self.trial_name_label.setAlignment(Qt.AlignCenter)
+        self.trial_name_label.setContentsMargins(0, 0, 0, 0)
+
+        trial_name_layout = QVBoxLayout()
+        trial_name_layout.setObjectName(u"trial_name_layout")
+        trial_name_layout.setContentsMargins(0, 0, 0, 0)
+        # define dimensions for the trial name layout
+        if self.settings["language"] == "eng":
+            trial_name_selection_text = "Specify Trial Name for Import"
+        elif self.settings["language"] == "de":
+            trial_name_selection_text = "Geben Sie den Versuchsnamen für den Import an"
+        self.trial_name_le = PyLineEdit(text=trial_name_selection_text, 
+                                     #place_holder_text="Trial Name",
+                                     radius=8, 
+                                    border_size=2,
+                                     color=self.themes["app_color"]["white"], 
+                                     bg_color=self.themes["app_color"]["dark_three"])
+        self.trial_name_le.setFixedHeight(80)
+        self.trial_name_le.setFixedWidth(500)
+
+        self.trial_name_le.setObjectName(u"trial_name")
+        self.trial_name_le.setPlaceholderText("Enter trial name")
+        # hide the text when the user clicks on the line edit
+        self.trial_name_le.setClearButtonEnabled(True)
+        # clear the line edit when the user clicks on it
+        self.trial_name_le.clear()
+        self.trial_name_le.setAlignment(Qt.AlignCenter)
+        trial_name_layout.addWidget(self.trial_name_label)
+        trial_name_layout.addWidget(self.trial_name_le)
+        trial_name_layout.setAlignment(Qt.AlignCenter)  
+
+
+        # place the status logo left and the status label right in one row at the center of the page
+        self.logo_label_layout = QHBoxLayout()
+        self.logo_label_layout.setSpacing(10)
+        self.logo_label_layout.addWidget(self.import_status_logo)
+        self.logo_label_layout.addWidget(self.import_status_label)
+        self.logo_label_layout.setAlignment(Qt.AlignCenter)
+
+        # movie label
+        self.import_movie_label = QLabel(self.import_page_base)
+        #sel.import_movie = PyLabel(self.image_analysis_page_base)  
+        if self.settings["theme_mode"] == "dark":
+            movie_path = os.path.join(os.getcwd(), r"gui\images\movies\import_screen_animation_black.gif")
+        else:
+            movie_path = os.path.join(os.getcwd(), r"gui\images\movies\import_screen_animation_white.gif")
+        
+        pixmap = QPixmap(movie_path)
+        path = QPainterPath()
+        path.addRoundedRect(pixmap.rect(), 20, 20)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        self.import_movie_label.setMask(region)
+        self.import_movie_label.setObjectName("movie label")
+        self.import_movie_label.setGeometry(QtCore.QRect(0, 0, 600, 400))
+        self.import_movie = QMovie(movie_path)
+        self.import_movie_label.setMovie(self.import_movie)
+        self.import_movie_label.setAlignment(Qt.AlignCenter)
+        self.import_movie.start()
+        self.import_movie.stop()
+        self.import_movie_label.hide()
+
+
+        # add a progress bar to show the progress of the import; hide it initially but show it when the import starts
+        self.import_page.progress_bar = PYProgressBar(parent=self.import_page,
+                                                    color = "black",
+                                                    bg_color = self.themes["app_color"]["context_color"],
+                                                    border_color=self.themes["app_color"]["white"],
+                                                    border_radius="5px")
+        self.import_page.progress_bar.setAlignment(Qt.AlignCenter)
+        self.import_page.progress_bar.setMaximumSize(QSize(400, 20))
+        self.import_page.progress_bar.setObjectName(u"import_progress_bar")
+        self.import_page.progress_bar.setOrientation(Qt.Horizontal)
+        self.import_page.progress_bar.setRange(0, 100)
+        self.import_page.progress_bar.setValue(0)
+        self.import_page.progress_bar.hide()
+
+
+        # import button to load images
+        if self.settings["language"] == "eng":
+            text = "Import Images"
+        elif self.settings["language"] == "de":
+            text = "Bilder importieren"
+        self.import_btn = PyPushButton(
+            parent=self.import_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        self.import_btn.setGeometry(QtCore.QRect(25, 25, 400, 200))
+        self.import_btn.clicked.connect(self.open_import_dialog)
+        self.import_btn_icon = QIcon(Functions.set_svg_icon("import_white.svg"))
+        self.import_btn.setIcon(self.import_btn_icon)
+        self.import_btn.setIconSize(QSize(30, 30))
+
+
+        # add cancel button to stop the import
+        if self.settings["language"] == "eng":
+            text = "Stop Import"
+        elif self.settings["language"] == "de":
+            text = "Import stoppen"
+        self.stop_import_btn = PyPushButton(
+            parent=self.import_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        self.stop_import_btn.setGeometry(QtCore.QRect(25, 25, 400, 200))
+        self.stop_import_btn.clicked.connect(self.stop_import)
+        self.stop_import_btn_icon = QIcon(Functions.set_svg_icon("stop_icon.svg"))
+        self.stop_import_btn.setIcon(self.stop_import_btn_icon)
+ 
+       
+        # add the import button to the layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.import_btn)
+        # add horizontal space
+        button_layout.addSpacing(200)
+        button_layout.addWidget(self.stop_import_btn)
+        button_layout.setAlignment(Qt.AlignCenter)
+
+        self.import_page_layout.addLayout(self.logo_label_layout)
+        self.import_page_layout.addWidget(self.import_movie_label, 0, Qt.AlignHCenter)
+        self.import_page_layout.addSpacing(20)
+
+        self.import_page_layout.addWidget(self.import_page.progress_bar, 0, Qt.AlignHCenter)
+        self.import_page_layout.addSpacing(20)
+
+        self.import_page_layout.addLayout(trial_name_layout)
+        self.import_page_layout.addSpacing(20)
+
+        self.import_page_layout.addLayout(button_layout)
+        self.import_page_layout.setAlignment(Qt.AlignCenter)
+
+        self.pages.addWidget(self.import_page)
+
+    def open_import_dialog(self):
+        
+        # update settings
+        self.settings = Settings().items
+
+        # shost is a QString object
+        self.trial_name = self.trial_name_le.text()
+        self.trial_name_insert_translation = {"eng": "Specify Trial Name for Import", "de": "Geben Sie den Versuchsnamen für den Import an"}
+        if self.trial_name == "" or self.trial_name in self.trial_name_insert_translation.values():
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.import_page, "Warning", "Please enter a trial name")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.import_page, "Warnung", "Bitte geben Sie einen Versuchsnamen ein")
+            return
+        
+        # ask the user to select a folder
+        if self.settings["language"] == "eng":
+            self.image_import_base_dir = QtWidgets.QFileDialog.getExistingDirectory(self.import_page, 
+                                                                                    "Select Directory",
+                                                                                    options=QtWidgets.QFileDialog.ShowDirsOnly,
+                                                                                    dir=os.path.expanduser("~"),                   
+                                                                                    )
+        elif self.settings["language"] == "de":
+            self.image_import_base_dir = QtWidgets.QFileDialog.getExistingDirectory(self.import_page, 
+                                                                                    "Ordner auswählen",
+                                                                                    options=QtWidgets.QFileDialog.ShowDirsOnly,
+                                                                                    dir=os.path.expanduser("~")
+                                                                                    )
+
+        #print(f"Selected folder: {self.image_import_base_dir}")
+
+        if not self.image_import_base_dir:
+            #show message box that no folder was selected
+            #QtWidgets.QMessageBox.warning(self.import_page, "Warning", "No folder selected")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.import_page, "Warning", "No folder selected")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.import_page, "Warnung", "Kein Ordner ausgewählt")
+        else:
+            # hide the status logo
+            self.import_movie_label.show()
+            self.import_status_logo.hide()
+            self.import_status_label.hide()
+            
+            # hide the status logo
+            self.import_movie.start()
+            self.import_page.progress_bar.show()
+
+             # Create the import thread
+            self.import_thread = ImportThread(self.import_images)  # Create the import thread
+
+            # Connect the progress signal to the progress bar
+            self.import_thread.progress_signal.connect(self.import_page.progress_bar.setValue)
+            self.import_thread.status_signal.connect(self.import_status_label.setText)  # Connect the status signal to the label's setText method
+
+            # Connect the finished signal to a function
+            self.import_thread.finished_signal.connect(self.on_import_finished)  # Connect the finished signal to a function
+            # run the import
+            self.import_thread.start()
+
+    def on_import_finished(self):
+
+        # This function will be called when the import is finished
+        self.import_movie.stop()
+        self.import_movie_label.hide()
+        self.import_page.progress_bar.setValue(100)
+        self.import_page.progress_bar.hide()
+        self.trial_name_le.hide()
+        self.trial_name_label.hide()
+
+        # check how many images were imported
+        if len(self.images_file_paths) == 0:
+            # show a warning message that no images were imported
+            if self.settings["language"] == "eng":
+                #QtWidgets.QMessageBox.warning(self.import_page, "Warning", "No images were imported")
+                self.import_status_label.setText("No images were imported. Please modify the import name filter (if set) and try again.")
+            elif self.settings["language"] == "de":
+                #QtWidgets.QMessageBox.warning(self.import_page, "Warnung", "Keine Bilder wurden importiert")
+                self.import_status_label.setText("Keine Bilder wurden importiert. Bitte ändern Sie den Importnamenfilter (falls festgelegt) und versuchen Sie es erneut.")
+            # load red cross
+            self.import_status_logo.setPixmap(QPixmap(Functions.set_image("red_cross.png")))
+            self.import_status_logo.show()
+            self.import_status_label.show()
+            # show the trial name layout again
+            self.trial_name_le.show()
+            self.trial_name_label.show()
+            return
+        else:
+            # load green checkmark
+            self.import_status_logo.setPixmap(QPixmap(Functions.set_image("green_check.png")))
+            self.import_status_logo.show()
+            self.import_status_label.show()
+
+            if self.settings["language"] == "eng":
+                self.import_status_label.setText(f"{len(self.images_file_paths)} images imported. Click the 'Image Analysis' button to continue.")
+            elif self.settings["language"] == "de":
+                self.import_status_label.setText(f"{len(self.images_file_paths)} Bilder importiert. Klicken Sie auf die Schaltfläche 'Bildanalyse', um fortzufahren.")
+            # show the trial name layout again
+            self.trial_name_le.show()
+            self.trial_name_label.show()
+
+        
+    def import_images(self):
+        """
+        Import the images from the selected directory. Yielded progress and status messages are sent to the import thread and used to update the progress bar and status label
+        
+        Yields:
+            int: The progress value
+            str: The status message
+            
+        """
+        # reload the settings
+        settings = Settings()
+        self.settings = settings.items
+
+        trial_name = self.trial_name_le.text()
+
+        self.import_movie_label.show()
+        self.import_movie.start()
+
+        #create a folder to store the output images
+        current_trial_destination = os.path.join(self.imported_files_dir, trial_name)
+        #print(f"Source path: {self.image_import_base_dir}")
+        #print(f"Destination path: {current_trial_destination}")
+
+        if not os.path.exists(current_trial_destination ):
+            os.makedirs(current_trial_destination, exist_ok=True)
+        # store complete paths to the images in a list
+        # walk over the files in the directory and check if the file name contains EDF_RAW_ch00 and not Merged
+        self.images_file_paths = []
+        for root, dirs, files in os.walk(self.image_import_base_dir):
+            # also consider subdirectories
+            for file in files:
+                if file.endswith(".tif"):
+                    if convert_str_to_bool(self.settings["processing_settings"]["filter_images"]) == True:
+                        if self.settings["processing_settings"]["name_filter"] in file or self.settings["processing_settings"]["name_filter"].upper() in file or self.settings["processing_settings"]["name_filter"].lower() in file:
+                            self.images_file_paths.append(os.path.join(root, file))
+                    else:
+                        self.images_file_paths.append(os.path.join(root, file))
+
+        #self.images_file_paths = [file for file in os.listdir(root) if "EDF_RAW_ch00" in file and not "Merged" in file]
+        #yield 0, f"Found {len(self.images_file_paths)} images"
+        #print(f"Found {len(self.images_file_paths)} images")
+
+        self.images_dims = {os.path.basename(image_file): {"initial": None, "final": None} for image_file in self.images_file_paths}
+
+        for idx, image_file in enumerate(self.images_file_paths):
+            #self.current_step_2.setText(f"Importing image {idx + 1} of {len(self.images_file_paths)}")
+            file_name = os.path.basename(image_file)
+            # Update the progress bar using the signal
+            progress_value = int((idx + 1) / len(self.images_file_paths) * 100)
+            #yield progress_value, f"Importing image {idx + 1} of {len(self.images_file_paths)}"
+            if self.settings["language"] == "eng":
+                status = f"Importing image {idx + 1} of {len(self.images_file_paths)}"
+            elif self.settings["language"] == "de":
+                status = f"Bild {idx + 1} von {len(self.images_file_paths)} wird importiert"
+            yield progress_value, status
+            
+            if self.import_process_stopped:
+                break
+            source_path = image_file #os.path.join(root, image_file)
+            destination_path = os.path.join(current_trial_destination, os.path.basename(image_file))
+
+            # Read the 16-bit image
+            img_16bit = cv2.imread(source_path, cv2.IMREAD_UNCHANGED)
+            if img_16bit is None:
+                print(f"Error: Unable to read the image from {source_path}")
+                return
+    
+            if self.settings["processing_settings"]["convert_img_to_8bit"]:
+                # Read the 16-bit image
+                #img_16bit = cv2.imread(source_path, cv2.IMREAD_UNCHANGED)
+                #if img_16bit is None:
+                    #print(f"Error: Unable to read the image from {source_path}")
+                    #return
+                img_8bit = cv2.normalize(img_16bit, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                resolution_unit = 2  # 2 indicates inches
+                x_dpi = 72
+                y_dpi = 72
+
+                # store the dimensions of the images
+                self.images_dims[file_name]["initial"] = img_16bit.shape
+
+                # if cropping is defined in the settings, crop the image
+                if convert_str_to_bool(self.settings["processing_settings"]["crop_images"]) == True:
+                 
+                    image_cropper = ImageCropper(image=img_8bit, 
+                                 crop_left=float(self.settings["processing_settings"]["crop_left"])/100, 
+                                crop_right=float(self.settings["processing_settings"]["crop_right"])/100, 
+                                crop_top=float(self.settings["processing_settings"]["crop_top"])/100, 
+                                crop_bottom=float(self.settings["processing_settings"]["crop_bottom"])/100,
+                                show_cropped_image=False, filename=file_name,
+                                saving_path=destination_path)
+                    cropped_image = image_cropper.cropped_image
+                    cropped_image_dims = cropped_image.shape
+                    self.images_dims[file_name]["final"] = cropped_image_dims
+
+                    #print(f"Conversion complete. 8-bit image saved at {destination_path} and cropped.") 
+                    #print(f"crop_left: {self.settings['processing_settings']['crop_left']}")
+                    #print(f"crop_right: {self.settings['processing_settings']['crop_right']}")
+                    #print(f"crop_top: {self.settings['processing_settings']['crop_top']}")
+                    #print(f"crop_bottom: {self.settings['processing_settings']['crop_bottom']}")
+
+                else:
+                    cv2.imwrite(destination_path, img_8bit, [
+                    cv2.IMWRITE_TIFF_COMPRESSION, 1,
+                    cv2.IMWRITE_TIFF_RESUNIT, resolution_unit,
+                    cv2.IMWRITE_TIFF_XDPI, x_dpi,
+                    cv2.IMWRITE_TIFF_YDPI, y_dpi
+                    ])
+                    #print(f"Conversion complete. 8-bit image saved at {destination_path}")
+                    self.images_dims[file_name]["final"] = img_8bit.shape
+            else:
+                # if cropping is defined in the settings, crop the image
+                if convert_str_to_bool(self.settings["processing_settings"]["crop_images"]) == True:
+                    image_cropper = ImageCropper(image=None, 
+                                    image_path=source_path,
+                                    crop_left=self.settings["processing_settings"]["crop_left"],
+                                    crop_right=self.settings["processing_settings"]["crop_right"],
+                                    crop_top=self.settings["processing_settings"]["crop_top"],
+                                    crop_bottom=self.settings["processing_settings"]["crop_bottom"],
+                                    show_cropped_image=False, 
+                                    filename=file_name, 
+                                    saving_path=destination_path)
+                    cropped_image = image_cropper.cropped_image
+                    cropped_image_dims = cropped_image.shape
+                    self.images_dims[file_name]["final"] = cropped_image_dims
+                    #print(f"16-bit image {source_path} cropped and saved at {destination_path}")
+                else:
+                    shutil.copyfile(source_path, destination_path)
+                    #print(f"16-bit image {source_path} copied to {destination_path}") 
+                    self.images_dims[file_name]["final"] = img_16bit.shape
+        
+            # dump the images dimensions to a json file
+            with open(os.path.join(current_trial_destination, "images_dims.json"), "w") as f:
+                json.dump(self.images_dims, f, indent=4)
+        
+        self.total_images += len(self.images_file_paths)
+        self.imported_trial_paths.append(current_trial_destination)
+        if self.settings["language"] == "eng":
+            status = f"Importing images finished. Total images imported: {self.total_images}"
+        elif self.settings["language"] == "de":
+            status = f"Bilderimport abgeschlossen. Insgesamt importierte Bilder: {self.total_images}"
+        yield 100, status
+
+    def get_trial_folders(self):
+        """
+        Get the list of folders (Trials) in the Imports directory
+        """
+        # Get the list of folders in the Imports directory
+        if not os.path.exists(self.imported_files_dir):
+            os.makedirs(self.imported_files_dir, exist_ok=True)
+        trial_folders = [folder for folder in os.listdir(self.imported_files_dir) if os.path.isdir(os.path.join(self.imported_files_dir, folder))]
+        self.trial_folders = trial_folders
+        return trial_folders
+    
+    def refresh_trial_folder_names(self):
+        """
+        Reconstruct the paths to the imported trials
+        """
+        # Get the list of folders in the Imports directory
+        if not os.path.exists(self.imported_files_dir):
+            os.makedirs(self.imported_files_dir, exist_ok=True)
+        trial_folders = [folder for folder in os.listdir(self.imported_files_dir) if os.path.isdir(os.path.join(self.imported_files_dir, folder))]
+        
+        self.trial_folders = trial_folders
+
+        # also of the analysis page, results page and data management page
+        self.trial_selection_combo_analysis_page.clear()
+        self.trial_selection_combo_results_page.clear()
+        self.trial_selection_combo_datamanagement_page.clear()
+        if len(self.trial_folders) == 0:
+            if self.settings["language"] == "eng":
+                self.trial_selection_combo_analysis_page.addItem("No Trials")
+                self.trial_selection_combo_results_page.addItem("No Trials")
+                self.trial_selection_combo_datamanagement_page.addItem("No Trials")
+            elif self.settings["language"] == "de":
+                self.trial_selection_combo_analysis_page.addItem("Keine Versuche")
+                self.trial_selection_combo_results_page.addItem("Keine Versuche")
+                self.trial_selection_combo_datamanagement_page.addItem("Keine Versuche")
+
+        elif len(self.trial_folders) == 1:
+            if self.settings["language"] == "eng":
+                self.trial_selection_combo_analysis_page.addItem("Select Trial")
+                self.trial_selection_combo_analysis_page.addItems(self.trial_folders)
+                self.trial_selection_combo_results_page.addItem("Select Trial")
+                self.trial_selection_combo_results_page.addItems(self.trial_folders)
+                self.trial_selection_combo_datamanagement_page.addItem("Select Trial")
+                self.trial_selection_combo_datamanagement_page.addItems(self.trial_folders)
+            elif self.settings["language"] == "de":
+                self.trial_selection_combo_analysis_page.addItem("Versuch auswählen")
+                self.trial_selection_combo_analysis_page.addItems(self.trial_folders)
+                self.trial_selection_combo_results_page.addItem("Versuch auswählen")
+                self.trial_selection_combo_results_page.addItems(self.trial_folders)
+                self.trial_selection_combo_datamanagement_page.addItem("Versuch auswählen")
+                self.trial_selection_combo_datamanagement_page.addItems(self.trial_folders)
+        else:
+            if self.settings["language"] == "eng":  
+                self.trial_selection_combo_analysis_page.addItem("Select Trial")
+                self.trial_selection_combo_analysis_page.addItem("All Trials")
+                self.trial_selection_combo_analysis_page.addItems(self.trial_folders)
+                self.trial_selection_combo_results_page.addItem("Select Trial")
+                self.trial_selection_combo_results_page.addItem("All Trials")
+                self.trial_selection_combo_results_page.addItems(self.trial_folders)
+                self.trial_selection_combo_datamanagement_page.addItem("Select Trial")
+                self.trial_selection_combo_datamanagement_page.addItem("All Trials")
+                self.trial_selection_combo_datamanagement_page.addItems(self.trial_folders)
+            elif self.settings["language"] == "de":
+                self.trial_selection_combo_analysis_page.addItem("Versuch auswählen")
+                self.trial_selection_combo_analysis_page.addItem("Alle Versuche")
+                self.trial_selection_combo_analysis_page.addItems(self.trial_folders)
+                self.trial_selection_combo_results_page.addItem("Versuch auswählen")
+                self.trial_selection_combo_results_page.addItem("Alle Versuche")
+                self.trial_selection_combo_results_page.addItems(self.trial_folders)
+                self.trial_selection_combo_datamanagement_page.addItem("Versuch auswählen")
+                self.trial_selection_combo_datamanagement_page.addItem("Alle Versuche")
+                self.trial_selection_combo_datamanagement_page.addItems(self.trial_folders)
+
+        self.trial_selection_combo_analysis_page.setCurrentIndex(0)
+        self.trial_selection_combo_results_page.setCurrentIndex(0)
+        self.trial_selection_combo_datamanagement_page.setCurrentIndex(0)
+
+        return trial_folders
+
+    def stop_import(self):
+        self.import_process_stopped = True
+        self.import_thread.terminate()
+        self.import_page.progress_bar.hide()
+        self.import_movie.stop()
+        self.import_movie_label.hide()
+        #self.import_status_label.setText("Import process stopped")
+        if self.settings["language"] == "eng":
+            self.import_status_label.setText("Import process stopped")
+        elif self.settings["language"] == "de":
+            self.import_status_label.setText("Importprozess gestoppt")
+        self.import_status_logo.setPixmap(QPixmap(Functions.set_image("red_cross.png")))
+        self.import_status_logo.show()
+        self.import_status_label.show()
+
+
+    # ----- SETUP ANALYSIS PAGE ----- #
+    
+    def toggle_console_window(self):
+        """ Show or hide the separate console window. """
+                
+
+        if self.console_visible:
+            self.console_window.hide()
+            if self.settings["language"] == "eng":
+                self.toggle_console_button.setText("Show Console")
+            elif self.settings["language"] == "de":
+                self.toggle_console_button.setText("Konsole anzeigen")
+        else:
+            self.console_window.show()
+            if self.settings["language"] == "eng":
+                self.toggle_console_button.setText("Hide Console")
+            elif self.settings["language"] == "de":
+                self.toggle_console_button.setText("Konsole ausblenden")
+
+        self.console_visible = not self.console_visible
+
+    def closeEvent(self, event):
+        """ Restore stdout and stderr when the main window is closed. """
+        sys.stdout = sys.__stdout__  # Restore original stdout
+        sys.stderr = sys.__stderr__  # Restore original stderr
+        super().closeEvent(event)
+
+    def setup_analysis_page(self):
+
+        """
+        Setup the image analysis page
+        """
+        self.image_analysis_page = QWidget()
+        self.image_analysis_page.setObjectName(u"image_analysis_page")
+        self.image_analysis_page.setStyleSheet(u"font-size: 14pt")
+        self.image_analysis_page_layout = QVBoxLayout(self.image_analysis_page)
+        self.image_analysis_page_layout.setObjectName(u"image_analysis_page_layout")
+        
+        self.image_analysis_page_base = QFrame(self.image_analysis_page)
+        self.image_analysis_page_base.setObjectName(u"image_analysis_page_base")
+
+        self.center_page_layout = QVBoxLayout(self.image_analysis_page_base)
+        #self.center_page_layout.setSpacing(10)
+        self.center_page_layout.setObjectName(u"center_page_layout")
+        self.center_page_layout.setContentsMargins(0, 0, 0, 0)
+    
+        self.image_analysis_page_layout.addWidget(self.image_analysis_page_base, 0, Qt.AlignHCenter)
+
+
+        # movie label
+        self.movie_label = QLabel(self.image_analysis_page_base)
+        #self.movie_label = PyLabel(self.image_analysis_page_base)  
+        if self.settings["theme_mode"] == "dark":
+            movie_path = os.path.join(os.getcwd(), r"gui\images\movies\ai_processing_screen_black.gif")
+        else:
+            movie_path = os.path.join(os.getcwd(), r"gui\images\movies\ai_processing_screen_black.gif")
+        
+        self.movie_label = QLabel(self.image_analysis_page_base)
+        pixmap = QPixmap(movie_path)
+        path = QPainterPath()
+        path.addRoundedRect(pixmap.rect(), 20, 20)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        self.movie_label.setMask(region)
+        self.movie_label.setObjectName("movie label")
+        self.movie_label.setGeometry(QtCore.QRect(0, 0, 600, 400))
+        self.movie_label.setObjectName("movie_label")
+        self.movie = QMovie(movie_path)
+        self.movie_label.setMovie(self.movie)
+        self.movie.start()
+        self.movie.stop()
+        self.image_analysis_page_layout.addWidget(self.movie_label)
+        self.image_analysis_page_layout.setAlignment(Qt.AlignCenter)
+        self.image_analysis_page_layout.addSpacing(10)
+
+        # add a text label to show the status of the analysis
+        self.analysis_status_label = QLabel(self.image_analysis_page_base)
+        self.analysis_status_label.setObjectName(u"analysis_status_label")
+        self.analysis_status_label.setAlignment(Qt.AlignCenter)
+        if self.settings["language"] == "eng":
+            self.analysis_status_label.setText("Click the 'Run Analysis' button to start the analysis")
+        elif self.settings["language"] == "de":
+            self.analysis_status_label.setText("Klicken Sie auf die Schaltfläche 'Analyse starten', um die Analyse zu starten")
+        self.image_analysis_page_layout.addWidget(self.analysis_status_label)
+        self.image_analysis_page_layout.addSpacing(10)
+
+        # add a second label to show the status of the analysis
+        self.analysis_status_label_2 = QLabel(self.image_analysis_page_base)
+        self.analysis_status_label_2.setObjectName(u"analysis_status_label_2")
+        self.analysis_status_label_2.setAlignment(Qt.AlignCenter)
+        self.analysis_status_label_2.setText(" ")
+        self.image_analysis_page_layout.addWidget(self.analysis_status_label_2)
+        self.image_analysis_page_layout.addSpacing(5)
+
+
+        # add a progress bar to show the progress of the analysis; hide it initially but show it when the analysis starts
+        self.analysis_progress_bar = PYProgressBar(parent=self.image_analysis_page_base,
+                                        color = "black",
+                                        bg_color = self.themes["app_color"]["context_color"],
+                                        border_color=self.themes["app_color"]["white"],
+                                        border_radius="5px")
+        self.analysis_progress_bar.setMaximumSize(QSize(600, 100))
+        self.analysis_progress_bar.setObjectName(u"analysis_progress_bar")
+        self.analysis_progress_bar.setOrientation(Qt.Horizontal)
+        self.analysis_progress_bar.setRange(0, 100)
+        self.analysis_progress_bar.setValue(0)
+        self.analysis_progress_bar.hide()
+        self.analysis_progress_bar.setAlignment(Qt.AlignHCenter)
+        self.image_analysis_page_layout.addWidget(self.analysis_progress_bar, 0, Qt.AlignHCenter)
+        self.image_analysis_page_layout.addSpacing(5)
+        self.image_analysis_page_layout.setAlignment(Qt.AlignCenter)
+
+        # show the user a dropdown list of the trials to select from for analysis also add an "ALL TRIALS" option to analyze all trials
+        self.trial_selection_label_analysis = QLabel(self.image_analysis_page_base)
+        self.trial_selection_label_analysis.setObjectName(u"trial_selection_label_analysis")
+        #self.trial_selection_label_analysis.setText("Select Trial: ")
+        if self.settings["language"] == "eng":
+            self.trial_selection_label_analysis.setText("Select Trial: ")
+        elif self.settings["language"] == "de":
+            self.trial_selection_label_analysis.setText("Versuch auswählen: ")
+        self.trial_selection_label_analysis.setAlignment(Qt.AlignCenter)
+        self.trial_selection_label_analysis.setContentsMargins(0, 0, 0, 0)
+        self.trial_selection_label_analysis.setStyleSheet(u"font-size: 14pt")
+
+        # create a combo box to display the list of trials
+        self.trial_selection_combo_analysis_page = PyComboBox(self.image_analysis_page_base)
+        self.trial_selection_combo_analysis_page.setMaximumWidth(600)
+        #self.trial_selection_combo_analysis_page.setGeometry(QtCore.QRect(25, 25, 600, 200))
+        self.trial_selection_combo_analysis_page.setObjectName(u"trial_selection_combo_analysis_page")
+        #self.trial_selection_combo_analysis_page.addItem("Select Trial")
+        self.trial_selection_combo_analysis_page.addItems(self.get_trial_folders())
+
+        # add the trial selection label and combo to the layout
+        self.image_analysis_page_layout.addWidget(self.trial_selection_label_analysis, 0, Qt.AlignHCenter)
+
+        # add a refresh button to refresh the list of trials
+        """
+        self.refresh_trials_btn = PyPushButton(
+            parent=self.image_analysis_page,
+            text="Refresh Trials",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.refresh_trials_btn.clicked.connect(self.refresh_trial_folder_names)
+        
+        """
+   
+        trial_selection_layout = QHBoxLayout()
+        trial_selection_layout.addWidget(self.trial_selection_label_analysis)
+        trial_selection_layout.addWidget(self.trial_selection_combo_analysis_page)
+        trial_selection_layout.setAlignment(Qt.AlignCenter)
+
+        self.image_analysis_page_layout.addLayout(trial_selection_layout)
+        # align the trial selection layout to the center
+        self.image_analysis_page_layout.setAlignment(Qt.AlignCenter)
+        self.image_analysis_page_layout.addSpacing(15)
+
+        
+        # analysis button
+        if self.settings["language"] == "eng":
+            text = "Run Analysis"
+        elif self.settings["language"] == "de":
+            text = "Analyse starten"
+        self.analysis_btn = PyPushButton(
+                parent=self.image_analysis_page,
+                text=text,
+                radius=8,
+                color=self.themes["app_color"]["text_foreground"],
+                bg_color=self.themes["app_color"]["dark_one"],
+                bg_color_hover=self.themes["app_color"]["dark_three"],
+                bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.analysis_btn.setGeometry(QtCore.QRect(25, 25, 400, 200))
+        self.analysis_btn.clicked.connect(self.open_analysis_dialog)
+        #self.image_analysis_page_layout.addWidget(self.analysis_btn, 0, Qt.AlignHCenter)
+
+        self.analysis_btn_icon = QIcon(Functions.set_svg_icon("run_analysis_icon.svg")) 
+        self.analysis_btn.setIcon(self.analysis_btn_icon)
+        self.analysis_btn.setIconSize(QSize(30, 20))
+
+        # add a cancel button to stop the analysis
+        if self.settings["language"] == "eng":
+            text = "Stop Analysis"
+        elif self.settings["language"] == "de":
+            text = "Analyse stoppen"
+        self.stop_analysis_btn = PyPushButton(
+                parent=self.image_analysis_page,
+                text=text,
+                radius=8,
+                color=self.themes["app_color"]["text_foreground"],
+                bg_color=self.themes["app_color"]["dark_one"],
+                bg_color_hover=self.themes["app_color"]["dark_three"],
+                bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.stop_analysis_btn.setGeometry(QtCore.QRect(25, 25, 400, 200))
+        self.stop_analysis_btn.clicked.connect(self.stop_analysis)
+
+        self.stop_analysis_btn_icon = QIcon(Functions.set_svg_icon("stop_icon.svg"))
+        self.stop_analysis_btn.setIcon(self.stop_analysis_btn_icon)
+        self.stop_analysis_btn.setIconSize(QSize(30, 20))
+        
+               # Button to open/close the console window
+        #self.toggle_console_button = QPushButton("Open Console Window")
+        if self.settings["language"] == "eng":
+            text = "Show Console"
+        elif self.settings["language"] == "de":
+            text = "Konsole anzeigen"
+        self.toggle_console_button = PyPushButton(
+            parent=self.image_analysis_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.toggle_console_button.setGeometry(QtCore.QRect(25, 25, 400, 200))
+        self.show_console_btn_icon = QIcon(Functions.set_svg_icon("show_console_icon.svg"))
+        self.toggle_console_button.setIcon(self.show_console_btn_icon)
+        self.toggle_console_button.setIconSize(QSize(30, 20))
+        self.toggle_console_button.clicked.connect(self.toggle_console_window)
+
+        # Create the console window but do not show it yet
+        self.console_window = ConsoleWindow()
+        self.console_window.setWindowTitle("Console")
+        self.console_visible = False
+    
+        
+
+         # Define the button layout
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.analysis_btn)
+        # add horizontal space
+        button_layout.addSpacing(100)
+        button_layout.addWidget(self.stop_analysis_btn)
+        
+        button_layout.addSpacing(100)
+        button_layout.addWidget(self.toggle_console_button)
+        #self.image_analysis_page_layout.addStretch(1)
+        self.image_analysis_page_layout.addLayout(button_layout)
+        #self.image_analysis_page_layout.addStretch(1)
+        
+        # add the page to the stack
+        self.pages.addWidget(self.image_analysis_page)
+
+    def check_imported_files(self):
+        """
+        
+        Check if the imported files directory exists and store the absolute paths of images in the directory
+        
+        Returns:
+            
+            bool: True if the directory exists and images are found, False otherwise
+            """
+        # check if the imported files directory exists and store the absolute paths of images in the directory
+        if not os.path.exists(self.imported_files_dir):
+            return False
+        else:
+            self.images_file_paths = {}
+            for trial_name in os.listdir(self.imported_files_dir):
+                trial_dir = os.path.join(self.imported_files_dir, trial_name)
+                if os.path.isdir(trial_dir):
+                    trial_images = [os.path.join(trial_dir, file) for file in os.listdir(trial_dir) if file.endswith(".tif")]
+                    if len(trial_images) > 0:
+                        self.images_file_paths[trial_name] = trial_images
+            if len(self.images_file_paths) == 0:
+                return False
+            else:
+                return True
+            
+    def stop_analysis(self):
+
+        # update the icon
+        self.analysis_btn_icon = QIcon(Functions.set_svg_icon("resume_white.svg"))
+        self.analysis_btn.setIcon(self.analysis_btn_icon)
+        self.analysis_btn.setIconSize(QSize(30, 20))
+
+        # set the stop analysis flag to True
+        self.analysis_thread_should_stop = True
+
+        #self.analysis_status_label.setText("Analysis stopped")
+        if self.settings["language"] == "eng":
+            self.analysis_status_label.setText("Analysis stopped.")
+        elif self.settings["language"] == "de":
+            self.analysis_status_label.setText("Analyse gestoppt.")
+        self.analysis_status_label_2.setText(" ")
+        self.movie.stop()
+        self.analysis_progress_bar.hide()
+        self.analysis_status_label.hide()
+        
+        # change the text of the analysis button to "Resume Analysis"
+        #self.analysis_btn.setText("Resume Analysis")
+        if self.settings["language"] == "eng":
+            self.analysis_btn.setText("Resume Analysis")
+        elif self.settings["language"] == "de":
+            self.analysis_btn.setText("Analyse fortsetzen")
+
+        # show the trial selection combo box
+        self.trial_selection_label_analysis.show()
+        self.trial_selection_combo_analysis_page.show()
+
+    def open_analysis_dialog(self):
+        #print("Image Analysis Button Clicked")
+
+        self.analysis_status_label.show()
+        self.analysis_status_label_2.show()
+        self.analysis_status_label_2.setText(" ")
+        self.analysis_status_label.setText(" ")
+        self.analysis_progress_bar.setValue(0)
+
+        # update the icon
+        self.analysis_btn_icon = QIcon(Functions.set_svg_icon("run_analysis_icon.svg"))
+        self.analysis_btn.setIcon(self.analysis_btn_icon)
+        self.analysis_btn.setIconSize(QSize(30, 20))
+
+    
+        # check if images have been imported
+        if not self.check_imported_files():
+            #QtWidgets.QMessageBox.warning(self.image_analysis_page, "Warning", "No images imported. Please import images first.")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.image_analysis_page, "Warning", "No images imported. Please import images first.")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.image_analysis_page, "Warnung", "Keine Bilder importiert. Bitte importieren Sie zuerst Bilder.")
+        else:
+            selected_trial = self.trial_selection_combo_analysis_page.currentText() 
+            if selected_trial == "Select Trial" or selected_trial == "Versuch auswählen":
+                #QtWidgets.QMessageBox.warning(self.image_analysis_page, "Warning", "Please select a trial to analyze")
+                if self.settings["language"] == "eng":
+                    QtWidgets.QMessageBox.warning(self.image_analysis_page, "Warning", "Please select a trial to analyze")
+                elif self.settings["language"] == "de":
+                    QtWidgets.QMessageBox.warning(self.image_analysis_page, "Warnung", "Bitte wählen Sie einen Versuch zur Analyse aus")
+            else:
+                # hide combo box label and combo box
+                self.trial_selection_label_analysis.hide()
+                self.trial_selection_combo_analysis_page.hide()
+
+                # run the analysis
+                self.movie.start()
+                # show the progress bar
+                self.analysis_progress_bar.show()
+                # show the status label
+                #self.analysis_status_label.setText("Running Image Analysis")
+                if self.settings["language"] == "eng":
+                    self.analysis_status_label.setText("Running Image Analysis")
+                elif self.settings["language"] == "de":
+                    self.analysis_status_label.setText("Bildanalyse läuft")
+                self.analysis_thread = AnalysisThread(parent=self.image_analysis_page, inference_function=self.perform_inference)
+                self.analysis_thread.start()
+                self.analysis_thread.finished_signal.connect(self.analysis_finished_slot)
+                self.analysis_thread.progress_signal.connect(self.analysis_progress_bar.setValue)
+                #self.analysis_thread.results_signal.connect(self.cache_current_results)   
+                self.analysis_thread.stop_process_signal.connect(self.stop_analysis)
+                #self.analysis_thread.status_signal.connect(self.analysis_status_label.setText)
+                #self.analysis_thread.image_num_signal.connect(self.update_image_num)
+
+    def cache_current_results(self, results_dict):
+        """
+        Cache the current results in a dictionary
+        """
+        if results_dict != {}:   
+            self.results_dict = results_dict
+        #print(f"Current cached results: {self.results_dict}")
+
+    def update_image_num(self, value):
+        #self.analysis_status_label.setText(f"Analyzing image {value + 1} of {len(self.images_file_paths)}")
+        self.current_image_index = value
+
+    def analysis_finished_slot(self, value):
+        #print(f"Analysis finished: {value}")
+        self.movie.stop()
+        self.analysis_progress_bar.hide()
+
+        self.trial_selection_label_analysis.show()
+        self.trial_selection_combo_analysis_page.show()
+        #self.analysis_status_label.setText("Image Analysis Completed")
+        #QtWidgets.QMessageBox.information(self.image_analysis_page, "Info", "Image Analysis Completed")
+        #self.view_results_btn.setEnabled(True)
+        #self.analysis_btn.setEnabled(False)
+        if self.settings["language"] == "eng":
+            self.analysis_status_label.setText("Image Analysis Completed")  
+        elif self.settings["language"] == "de":
+            self.analysis_status_label.setText("Bildanalyse abgeschlossen")
+
+    def perform_inference(self):
+        """
+        Perform inference on the images in the selected trial
+        """
+
+        self.settings = Settings().items
+    
+        # iterate over the images in the selected trial
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_analysis_page.currentText()
+
+        # update the status label
+        if self.settings["language"] == "eng":
+            upper_label_text = f"Analyzing images ... "
+            self.analysis_status_label.setText(upper_label_text)
+        elif self.settings["language"] == "de":
+            upper_label_text = f"Bilder werden analysiert ... "
+            self.analysis_status_label.setText(upper_label_text)
+            
+        # get the images to analyze
+        if selected_trial == "All Trials" or selected_trial == "Alle Versuche":
+            trials = self.images_file_paths.keys()
+            total_images = sum([len(self.images_file_paths[trial]) for trial in trials])
+        else:
+            trials = [selected_trial]
+
+        for trial in trials:
+
+            # get the total number of images in the current trial
+            all_images_of_trial = self.images_file_paths[trial]
+            total_images = len(all_images_of_trial)
+
+            # get the predictions directory
+            predictions_dir = os.path.join(self.imported_files_dir, trial, "predictions")
+            if not os.path.exists(predictions_dir):
+                os.makedirs(predictions_dir, exist_ok=True)
+                images = all_images_of_trial
+            else:
+                # get the list of prediction files
+                prediction_files = [file for file in os.listdir(predictions_dir) if file.endswith(".png")]
+                print(f"Prediction files: {prediction_files}")
+                # get the list of images that have not been analyzed
+                images = [image for image in all_images_of_trial if f"{os.path.splitext(os.path.basename(image))[0]}_prediction.png" not in prediction_files]
+            #print(f"Images to analyze for trial {trial}: {images}")
+            print(f"Images to analyze for trial {trial}: {len(images)}")
+            print(f"images in trial {trial}: {images}")
+            if self.settings["language"] == "eng":
+                label_text = f"Processing Import: '{trial}'"
+            elif self.settings["language"] == "de":
+                label_text = f"Import '{trial}' wird verarbeitet"
+            #label_text = upper_label_text + f"\n{len(images)} images to analyze"
+            if selected_trial == "All Trials" or selected_trial == "Alle Versuche":
+                #label_text = upper_label_text + f"\n{total_images} images to analyze across all imports"
+                #label_text = label_text + f"{len(images)} images in current import '{trial}'"
+                if self.settings["language"] == "eng":
+                    label_text = upper_label_text + f"\n{total_images} images to analyze across all imports"
+                    label_text = label_text + f"\n{len(images)} images in current import '{trial}'"
+                elif self.settings["language"] == "de":
+                    label_text = upper_label_text + f"\n{total_images} Bilder zur Analyse in allen Importen"
+                    label_text = label_text + f"\n{len(images)} Bilder im aktuellen Import '{trial}'"
+            else:
+                #label_text = upper_label_text + f"\n{len(images)} images in current import '{trial}'"
+                if self.settings["language"] == "eng":
+                    label_text = upper_label_text + f"\n{len(images)} images to analyze in current import '{trial}'"
+                elif self.settings["language"] == "de":
+                    label_text = upper_label_text + f"\n{len(images)} Bilder zur Analyse im aktuellen Import '{trial}'"
+
+            self.analysis_status_label.setText(label_text)
+
+
+            
+            # construct a model interface with the current trial as output directory
+            trial_dir = os.path.join(self.imported_files_dir, trial)
+            if isinstance(trial_dir, tuple):
+                trial_dir = trial_dir[0]
+
+            # check if there already exists an instances_results.json file in the trial directory
+            # if it exists, load the results dictionary from the file
+            # if it does not exist, create a new results dictionary
+            results_file = os.path.join(trial_dir, "instances_results.json")
+            if os.path.exists(results_file):
+                if hasattr(self, "results_dict"):
+                    del self.results_dict
+                with open(results_file, "r") as f:
+                    self.results_dict = json.load(f)
+                    print(f"Results file loaded from {results_file}")
+            else:
+                self.results_dict = {}
+                print(f"Results file created")
+
+            # if the process has not been stopped, run the inference passing None as the results_dict
+
+            if hasattr(self, "model_interface"):
+                #print("Deleting old interface")
+                del self.model_interface
+                torch.cuda.empty_cache()
+            
+            if hasattr(self, "instances_dict"):
+                #print("Creating a new model interface")
+                self.model_interface = ModelInteractor(instances_dict=self.instances_dict, 
+                                                store_coco_files=convert_str_to_bool(self.settings["processing_settings"]["save_coco"]),
+                                                store_csv_file=convert_str_to_bool(self.settings["processing_settings"]["save_csv"]),
+                                                store_xlsx_file=convert_str_to_bool(self.settings["processing_settings"]["save_excel"]),
+                                                output_dir=trial_dir, 
+                                                physical_image_width=self.physical_image_width,
+                            ) # 0.33264 physical width of the image in mm 
+
+                
+                # run the inference
+                gen_return = self.model_interface.run_inference(images, trial_dir, 
+                                                            language=self.settings["language"],
+                                                            results_dict=self.results_dict,
+                                                            analysis_thread_should_stop=self.analysis_thread_should_stop)
+                                                        
+
+                for image_num, process, status, results_dict in gen_return:
+
+                    if self.analysis_thread_should_stop:
+                        print("Analysis stopped")
+                        break
+        
+                    # store the current index of the image being analyzed
+                    self.current_image_index = image_num
+                    yield image_num, process, status, results_dict
+
+
+                    # update the status label
+                    self.analysis_status_label_2.setText(status)
+                self.analysis_thread_should_stop = False
+            else:
+                print("instances_dict not found")
+
+            # delete the model interface upon completion
+            del self.model_interface
+            del self.results_dict
+            torch.cuda.empty_cache()
+            print("Model interface removed from memory after analysis")
+
+
+
+    # ----- SETUP RESULTS PAGE ----- #
+    def setup_results_page(self):  
+        """
+        attributes for processing
+        """
+        self.results_page = QWidget()
+        self.results_page.setObjectName(u"results_page")
+        self.results_page.setStyleSheet(u"font-size: 14pt")
+        self.results_page_layout = QVBoxLayout(self.results_page)
+        self.results_page_layout.setObjectName(u"results_page_layout")
+        self.results_page_layout.setContentsMargins(5, 5, 5, 5)
+        self.results_page_layout.setSpacing(5)
+        
+        # let the user select a trial
+        self.trial_selection_label_results = QLabel(self.results_page)
+        self.trial_selection_label_results.setObjectName(u"trial_selection_label_results")
+        self.trial_selection_label_results.setAlignment(Qt.AlignLeft)
+        self.trial_selection_label_results.setText("Select a trial to view the results")
+        self.results_page_layout.addWidget(self.trial_selection_label_results)
+        self.results_page_layout.addSpacing(10)
+
+        # add progress bar to show the progress of the report generation
+        self.report_generation_progress_bar = PYProgressBar(parent=self.results_page,
+                                        color = "black",
+                                        bg_color = self.themes["app_color"]["context_color"],
+                                        border_color=self.themes["app_color"]["white"],
+                                        border_radius="5px")
+        self.report_generation_progress_bar.setMaximumSize(QSize(600, 100))
+        self.report_generation_progress_bar.setObjectName(u"report_generation_progress_bar")
+        self.report_generation_progress_bar.setOrientation(Qt.Horizontal)
+        self.report_generation_progress_bar.setRange(0, 100)
+        self.report_generation_progress_bar.setValue(0)
+        self.report_generation_progress_bar.hide()
+        self.report_generation_progress_bar.setAlignment(Qt.AlignHCenter)
+        self.results_page_layout.addWidget(self.report_generation_progress_bar, 0, Qt.AlignHCenter)
+        self.results_page_layout.addSpacing(10)
+
+        # create a combo box to select the trial
+        self.trial_selection_combo_results_page = PyComboBox(self.results_page)
+        self.trial_selection_combo_results_page.setMinimumWidth(200)
+        self.trial_selection_combo_results_page.setObjectName(u"trial_selection_combo_results_page")
+        #self.trial_selection_combo_results_page.addItem("Select Trial")
+        self.trial_selection_combo_results_page.addItems(self.get_trial_folders())
+
+        # add a refresh button to refresh the list of trials
+        """
+           self.refresh_trials_btn_results_page = PyPushButton(
+            parent=self.results_page,
+            text="Refresh Trials",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.refresh_trials_btn_results_page.setGeometry(QtCore.QRect(25, 25, 200, 100))
+        self.refresh_trials_btn_results_page.clicked.connect(self.refresh_trial_folder_names)
+        """
+     
+
+        # add a button to view the results
+        if self.settings["language"] == "eng":
+            text = "View Results"
+        elif self.settings["language"] == "de":
+            text =  "Ergebnisse anzeigen"
+        self.view_results_btn = PyPushButton(
+            parent=self.results_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.view_results_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))   
+        self.results_page_layout.addWidget(self.view_results_btn, 0, Qt.AlignCenter)
+        self.view_results_btn.clicked.connect(self.show_results_is_clicked)
+        self.view_results_btn_icon = QIcon(Functions.set_svg_icon("view_icon.svg"))
+        self.view_results_btn.setIcon(self.view_results_btn_icon)
+        self.view_results_btn.setIconSize(QSize(30, 30))
+
+        # add a button to store results for selected trial
+        if self.settings["language"] == "eng":
+            text = "Store Results"
+        elif self.settings["language"] == "de":
+            text = "Ergebnisse speichern"
+        self.store_results_btn = PyPushButton(
+            parent=self.results_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.store_results_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))
+        self.results_page_layout.addWidget(self.store_results_btn, 0, Qt.AlignCenter)
+        self.store_results_btn.clicked.connect(self.store_results)
+        self.store_results_btn_icon = QIcon(Functions.set_svg_icon("icon_save.svg"))
+        self.store_results_btn.setIcon(self.store_results_btn_icon)
+        self.store_results_btn.setIconSize(QSize(30, 30))
+
+
+
+        # add a button to generate a report for selected trial
+        if self.settings["language"] == "eng":
+            text = "Generate Report"
+        elif self.settings["language"] == "de":
+            text = "Bericht generieren"
+        self.generate_report_btn = PyPushButton(
+            parent=self.results_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.generate_report_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))
+        self.results_page_layout.addWidget(self.generate_report_btn, 0, Qt.AlignCenter)
+        self.generate_report_btn.clicked.connect(self.open_generate_report_dialog)
+        self.generate_report_btn_icon = QIcon(Functions.set_svg_icon("report_white.svg"))
+        self.generate_report_btn.setIcon(self.generate_report_btn_icon)
+        self.generate_report_btn.setIconSize(QSize(30, 30))
+
+        trial_selection_layout = QVBoxLayout()
+        trial_selection_layout.addWidget(self.trial_selection_label_results)
+
+        trial_selection_button_layout = QHBoxLayout()
+        trial_selection_button_layout.addWidget(self.trial_selection_combo_results_page)
+        trial_selection_button_layout.addSpacing(200)
+        #trial_selection_button_layout.addWidget(self.refresh_trials_btn_results_page)
+        trial_selection_button_layout.addWidget(self.view_results_btn)
+        trial_selection_button_layout.addSpacing(50)
+        trial_selection_button_layout.addWidget(self.store_results_btn)
+        trial_selection_button_layout.addSpacing(50)
+        trial_selection_button_layout.addWidget(self.generate_report_btn)
+        trial_selection_layout.addLayout(trial_selection_button_layout)
+        self.results_page_layout.addLayout(trial_selection_layout)
+        # align the trial selection layout to the center
+        self.results_page_layout.setAlignment(Qt.AlignCenter)
+        self.results_page_layout.addSpacing(50)
+       
+        self.pages.addWidget(self.results_page)
+
+    def store_results(self):
+        """
+        Store the results of the selected trial
+        """
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_results_page.currentText()
+        if selected_trial == "Select Trial" or selected_trial == "No Trials" or selected_trial == "Keine Versuche" or selected_trial == "Versuch auswählen":
+            #QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Please select a trial to store the results")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Please select a trial to store the results")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Bitte wählen Sie einen Versuch aus, um die Ergebnisse zu speichern")
+        elif selected_trial == "All Trials" or selected_trial == "Alle Versuche":
+            # set the text of the status label
+            #self.trial_selection_label_results.setText("Storing results for all trials ...")
+            if self.settings["language"] == "eng":
+                self.trial_selection_label_results.setText("Storing results for all trials ...")
+            elif self.settings["language"] == "de":
+                self.trial_selection_label_results.setText("Ergebnisse für alle Versuche werden gespeichert ...")
+            # get the directories of the trials
+            trial_dirs = [os.path.join(self.imported_files_dir, trial) for trial in self.trial_folders if trial not in self.folder_translation.values()]
+            if len(trial_dirs) == 0:
+                #QtWidgets.QMessageBox.warning(self.results_page, "Warning", "No trials to store results for.")
+                if self.settings["language"] == "eng":
+                    QtWidgets.QMessageBox.warning(self.results_page, "Warning", "No trials to store results for.")
+                elif self.settings["language"] == "de":
+                    QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Keine Versuche, für die Ergebnisse gespeichert werden können.")
+            else:
+                # store the results for all the trials
+                self.store_results_thread = StoreResultsThread(parent=self.results_page, store_results_function=self.store_results_for_multiple_trials(trial_paths=trial_dirs))
+                self.store_results_thread.start()
+                self.store_results_thread.finished_signal.connect(self.store_results_finished_slot)
+                self.store_results_thread.status_signal.connect(self.trial_selection_label_results.setText)
+        else:
+            # get the selected trial
+            selected_trial = self.trial_selection_combo_results_page.currentText()
+            # set the text of the status label
+            #self.trial_selection_label_results.setText("Storing results for trial {}".format(selected_trial))
+            if self.settings["language"] == "eng":
+                self.trial_selection_label_results.setText(f"Storing results for trial {selected_trial}")
+            elif self.settings["language"] == "de":
+                self.trial_selection_label_results.setText(f"Ergebnisse für Versuch {selected_trial} werden gespeichert")
+            # get the directory of the selected trial
+            trial_dir = os.path.join(self.imported_files_dir, selected_trial)
+            if isinstance(trial_dir, tuple):
+                trial_dir = trial_dir[0]
+            # store the results
+            self.store_results_thread = StoreResultsThread(parent=self.results_page, store_results_function=self.store_results_function(trial_dir=trial_dir))
+            self.store_results_thread.start()
+            self.store_results_thread.finished_signal.connect(self.store_results_finished_slot)
+            self.store_results_thread.status_signal.connect(self.trial_selection_label_results.setText)
+
+    def store_results_function(self, trial_dir):
+        """
+        Store the results of the selected trial
+        """
+        results_viewer = ResultsViewer(parent=None, trial_path=trial_dir, update_ui=False)
+        results_viewer.store_results()
+        yield 100, "Results stored successfully"
+        #QtWidgets.QMessageBox.information(self.results_page, "Info", "Results stored successfully")
+
+    def store_results_for_multiple_trials(self, trial_paths):
+        """
+        Store the results of the selected trial
+        """
+        for idx, trial_path in enumerate(trial_paths):
+   
+            results_viewer = ResultsViewer(parent=None, trial_path=trial_path, update_ui=False)
+            results_viewer.store_results()
+            progress = (idx + 1) / len(trial_paths) * 100
+            yield progress, f"Results stored successfully for {os.path.basename(trial_path)}"
+        #QtWidgets.QMessageBox.information(self.results_page, "Info", "Results stored successfully")
+
+    def store_results_finished_slot(self, value):
+        print(f"Store results finished: {value}")
+        if value == False:
+            #QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Failed to store results")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Failed to store results")
+                self.trial_selection_label_results.setText("Failed to store results")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Ergebnisse konnten nicht gespeichert werden")
+                self.trial_selection_label_results.setText("Ergebnisse konnten nicht gespeichert werden")
+        else:
+            #QtWidgets.QMessageBox.information(self.results_page, "Info", "Results stored successfully")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.information(self.results_page, "Info", "Results stored successfully")
+                self.trial_selection_label_results.setText("Results stored successfully")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.information(self.results_page, "Info", "Ergebnisse erfolgreich gespeichert")
+                self.trial_selection_label_results.setText("Ergebnisse erfolgreich gespeichert")
+    
+
+
+    def generate_report_function(self, trial_dir):
+
+        hyperparameters_path = os.path.join(trial_dir, "hyperparameters.json")
+        #print(f"Hyperparameters path: {hyperparameters_path}")
+        generate_report_for_trial(unit=self.settings["processing_settings"]["unit"], 
+                                  trial_dir=trial_dir, 
+                                  hp_params_path=hyperparameters_path, 
+                                  language=self.settings["language"])
+        #QtWidgets.QMessageBox.information(self.results_page, "Info", "Report generated successfully")
+
+    def open_generate_report_dialog(self):
+        """
+        Open the generate report dialog
+        """
+        # show the progress bar
+        #self.report_generation_progress_bar.show()
+
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_results_page.currentText()
+        if selected_trial == "Select Trial" or selected_trial == "No Trials" or selected_trial == "Keine Versuche" or selected_trial == "Versuch auswählen":
+            #QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Please select a trial to generate a report")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Please select a trial to generate a report")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Bitte wählen Sie einen Versuch aus, um einen Bericht zu generieren")
+        elif selected_trial == "All Trials" or selected_trial == "Alle Versuche":
+            # set the text of the status label
+            #self.trial_selection_label_results.setText("Generating report for all trials ...")
+            if self.settings["language"] == "eng":
+                self.trial_selection_label_results.setText("Generating report for all trials ...")
+            elif self.settings["language"] == "de":
+                self.trial_selection_label_results.setText("Bericht für alle Versuche wird generiert ...")
+            # get the directories of the trials
+            
+            trial_dirs = [os.path.join(self.imported_files_dir, trial) for trial in self.trial_folders if trial not in self.folder_translation.values()]
+        
+            if len(trial_dirs) == 0:
+                #QtWidgets.QMessageBox.warning(self.results_page, "Warning", "No trials to generate a report for.")
+                if self.settings["language"] == "eng":
+                    QtWidgets.QMessageBox.warning(self.results_page, "Warning", "No trials to generate a report for.")
+                elif self.settings["language"] == "de":
+                    QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Keine Versuche, für die ein Bericht generiert werden kann.")
+            elif len(trial_dirs) == 1:
+                #QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Only one trial found. Please select a trial to generate a report.")
+                if self.settings["language"] == "eng":
+                    QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Only one trial found. Please select a trial to generate a report.")
+                elif self.settings["language"] == "de":
+                    QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Nur ein Versuch gefunden. Bitte wählen Sie einen Versuch aus, um einen Bericht zu generieren.")
+
+            else:
+                # create a report for all the trials
+                self.settings = Settings().items
+                unit = self.settings["processing_settings"]["unit"]
+    
+                self.generate_report_thread = GenerateReportThread(parent=self.results_page,
+                            generate_report_function=generate_report_for_multiple_trials(unit=unit, 
+                                                                                        language=self.settings["language"],
+                                                                                        trial_dirs=trial_dirs))
+                self.generate_report_thread.start()
+                self.generate_report_thread.finished_signal.connect(self.reports_generation_finished_slot)
+                self.generate_report_thread.progress_signal.connect(self.report_generation_progress_bar.setValue)
+                self.generate_report_thread.status_signal.connect(self.trial_selection_label_results.setText)
+
+        
+        else:
+            print(f"Selected trial: {selected_trial}")
+            # get the selected trial
+            selected_trial = self.trial_selection_combo_results_page.currentText()
+            # set the text of the status label
+            #self.trial_selection_label_results.setText("Generating report for trial {}".format(selected_trial))
+            if self.settings["language"] == "eng":
+                self.trial_selection_label_results.setText(f"Generating report for trial {selected_trial}")
+            elif self.settings["language"] == "de":
+                self.trial_selection_label_results.setText(f"Bericht für Versuch {selected_trial} wird generiert")
+            trial_dir = os.path.join(self.imported_files_dir, selected_trial)
+            if isinstance(trial_dir, tuple):
+                trial_dir = trial_dir[0]
+
+            #check if predictions exist for the selected trial
+            self.settings = Settings().items
+            unit = self.settings["processing_settings"]["unit"]
+            hyper_parameters_path = os.path.join(trial_dir, "hyperparameters.json")
+            self.generate_report_thread = GenerateReportThread(parent=self.results_page, 
+                                                            generate_report_function=generate_report_for_trial(unit=unit,
+                                                            language=self.settings["language"],
+                                                            trial_dir=trial_dir,
+                                                            hp_params_path=hyper_parameters_path))
+            self.generate_report_thread.start()
+            self.generate_report_thread.finished_signal.connect(self.report_generation_finished_slot)
+            self.generate_report_thread.progress_signal.connect(self.report_generation_progress_bar.setValue)
+            self.generate_report_thread.status_signal.connect(self.trial_selection_label_results.setText)
+            self.generate_report_thread.failed_trials_signal.connect(self.store_failed_trials)
+
+
+
+    def report_generation_finished_slot(self, value):
+        print(f"Report generation finished: {value}")
+        #self.report_generation_progress_bar.hide()
+        if value == False:
+            # extract the failed trials from the status label they are inside ['']
+            failed_trials = self.trial_selection_label_results.text().split("'")[1]
+            #QtWidgets.QMessageBox.warning(self.results_page, "Warning", f"Report generation failed for the following trials: {failed_trials}")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warning", f"Report generation failed for the following trials: {failed_trials}")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warnung", f"Die Berichterstellung ist für die folgenden Versuche fehlgeschlagen: {failed_trials}")
+
+            # terminate the report generation thread
+            self.generate_report_thread.exit()
+
+        else:
+            #QtWidgets.QMessageBox.information(self.results_page, "Info", "Report generated successfully")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.information(self.results_page, "Info", "Report generated successfully")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.information(self.results_page, "Info", "Bericht erfolgreich generiert")
+
+
+
+    def store_failed_trials(self, failed_trial):
+        self.failed_trials.append(failed_trial)
+
+    def reports_generation_finished_slot(self, value):
+        print(f"Reports generation finished: {value}")
+        self.report_generation_progress_bar.hide()
+ 
+        if hasattr(self, "failed_trials") and len(self.failed_trials) > 0:
+            #QtWidgets.QMessageBox.warning(self.results_page, "Warning", f"Report generation failed for the following trials: {self.failed_trials}")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warning", f"Report generation failed for the following trials: {self.failed_trials}")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warnung", f"Die Berichterstellung ist für die folgenden Versuche fehlgeschlagen: {self.failed_trials}")
+        elif value == True and len(self.failed_trials) == 0:
+            #QtWidgets.QMessageBox.information(self.results_page, "Info", "Reports generated successfully")
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.information(self.results_page, "Info", "Reports generated successfully")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.information(self.results_page, "Info", "Berichte erfolgreich generiert")
+
+
+    def show_results_is_clicked(self):
+
+        # show either "show results" or "hide results"
+        if self.view_results_btn.text() == "View Results":
+            #self.results_page.show()
+            self.open_results_viewer()
+        else:
+            self.view_results_btn.setText("View Results")
+            self.view_results_btn.setIcon(QIcon(Functions.set_svg_icon("view_icon.svg")))	
+            #self.results_page.hide()
+            if hasattr(self, "results_viewer"):
+                self.results_viewer.close()
+        
+    def open_results_viewer(self):
+        """
+        Open the results viewer
+        """
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_results_page.currentText()
+        if selected_trial == "Select Trial" or selected_trial == "No Trials" or selected_trial == "Keine Versuche" or selected_trial == "Versuch auswählen":
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Please select a trial to view the results")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Bitte wählen Sie einen Versuch aus, um die Ergebnisse anzuzeigen")
+        elif selected_trial == "All Trials" or selected_trial == "Alle Versuche":
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warning", "Please select a single trial to view the results")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.results_page, "Warnung", "Bitte wählen Sie einen einzelnen Versuch aus, um die Ergebnisse anzuzeigen")
+        else:
+            if self.settings["language"] == "eng":
+                self.trial_selection_label_results.setText(f"Viewing results for trial {selected_trial}")
+            elif self.settings["language"] == "de":
+                self.trial_selection_label_results.setText(f"Ergebnisse für Versuch {selected_trial} werden angezeigt")
+            results_dir = os.path.join(self.imported_files_dir, selected_trial)
+            prediction_dir = os.path.join(results_dir, "predictions")
+            if not os.path.exists(prediction_dir):
+                # show a hint that there are no figures
+                if self.settings["language"] == "eng":
+                    warning_name = "No Results"
+                    warning_text = "No results to display for the selected trial. Please run the analysis first."
+                elif self.settings["language"] == "de":
+                    warning_name = "Keine Ergebnisse"
+                    warning_text = "Keine Ergebnisse zum Anzeigen für den ausgewählten Versuch. Bitte führen Sie zuerst die Analyse durch."
+                QMessageBox.critical(self.results_page, warning_name, warning_text)
+
+            else:
+                #print(f"Selected trial: {selected_trial}")
+
+                self.view_results_btn.setText("Hide Results")
+                self.view_results_btn.setIcon(QIcon(Functions.set_svg_icon("hide_icon.svg")))
+
+                            # if the results viewer is already open, close it
+                if hasattr(self, "results_viewer"):
+                    self.results_viewer.close()
+                    # remove ot from the layout
+                    self.results_page_layout.removeWidget(self.results_viewer)
+
+                # open the results viewer
+                trial_path = os.path.join(self.imported_files_dir, selected_trial)
+                if isinstance(trial_path, tuple):
+                    trial_path = trial_path[0]
+                self.results_viewer = ResultsViewer(parent=self.results_page, trial_path=trial_path, update_ui=True)
+                # add the results viewer to the layout and align it to the center
+                self.results_page_layout.addWidget(self.results_viewer, 0, Qt.AlignCenter)
+                self.results_viewer.show()
+
+    # ----- SETUP EMPTY PAGE ----- #
+    def setup_empty_page(self):
+        self.empty_page = QWidget()
+        self.empty_page.setObjectName(u"empty_page")
+        self.empty_page.setStyleSheet(u"QFrame {\n""	font-size: 16pt;\n""}")
+        self.empty_page_layout = QVBoxLayout(self.empty_page)
+        self.empty_page_layout.setObjectName(u"empty_page_layout")
+        self.empty_page_label = QLabel(self.empty_page)
+        self.empty_page_label.setObjectName(u"empty_page_label")
+        font = QFont()
+        font.setPointSize(16)
+        self.empty_page_label.setFont(font)
+        self.empty_page_label.setAlignment(Qt.AlignCenter)
+        self.empty_page_layout.addWidget(self.empty_page_label)
+        self.pages.addWidget(self.empty_page)
+
+    # ----- SETUP DATAMANAGEMENT PAGE ----- #
+        
+    def setup_datamanagement_page(self):
+
+        self.datamanagement_page = QWidget()
+        self.datamanagement_page.setObjectName(u"datamanagement_page")
+        self.datamanagement_page.setStyleSheet(u"font-size: 14pt")
+        self.datamanagement_page_layout = QVBoxLayout(self.datamanagement_page)
+        self.datamanagement_page_layout.setObjectName(u"datamanagement_page_layout")
+        self.datamanagement_page_label = QLabel(self.datamanagement_page)
+        self.datamanagement_page_label.setObjectName(u"datamanagement_page_label")
+        self.datamanagement_page_label.setAlignment(Qt.AlignCenter)
+        self.datamanagement_page_layout.addWidget(self.datamanagement_page_label)
+        self.pages.addWidget(self.datamanagement_page)
+
+        # add a combo box to select the trial
+        self.datamanagement_page_label.setText("Data Management Page")
+        self.datamanagement_page_layout.addWidget(self.datamanagement_page_label)
+        self.datamanagement_page_layout.setAlignment(Qt.AlignCenter)
+        self.datamanagement_page_layout.addSpacing(20)
+
+        # add pixmap
+        self.datamanagement_page_pixmap = QLabel(self.datamanagement_page)
+        self.datamanagement_page_pixmap.setObjectName(u"datamanagement_page_pixmap")
+        self.datamanagement_page_pixmap.setAlignment(Qt.AlignCenter)
+        self.datamanagement_page_pixmap.setPixmap(QPixmap(Functions.set_image(Functions.set_svg_icon("data_management.svg"))))
+        self.datamanagement_page_layout.addWidget(self.datamanagement_page_pixmap, 0, Qt.AlignCenter)
+
+
+        self.trial_selection_label_datamanagement = QLabel(self.datamanagement_page)
+        self.trial_selection_label_datamanagement.setObjectName(u"trial_selection_label_datamanagement")
+        self.trial_selection_label_datamanagement.setAlignment(Qt.AlignCenter)
+        self.trial_selection_label_datamanagement.setText("Select a trial to manage")
+        self.datamanagement_page_layout.addWidget(self.trial_selection_label_datamanagement, 0, Qt.AlignCenter)
+
+        # create a combo box to select the trial
+        self.trial_selection_combo_datamanagement_page = PyComboBox(self.datamanagement_page)
+        self.trial_selection_combo_datamanagement_page.setMaximumWidth(600)
+        self.trial_selection_combo_datamanagement_page.setObjectName(u"trial_selection_combo_datamanagement_page")
+        #self.trial_selection_combo_datamanagement_page.addItem("Select Trial")
+        self.trial_selection_combo_datamanagement_page.addItems(self.get_trial_folders())
+        self.datamanagement_page_layout.addWidget(self.trial_selection_combo_datamanagement_page, 0, Qt.AlignHCenter)
+
+        # add a progress bar to show the progress of the export; hide it initially but show it when the export starts
+        self.data_management_progress_bar = PYProgressBar(parent=self.datamanagement_page,
+                                        color = "black",
+                                        bg_color = self.themes["app_color"]["context_color"],
+                                        border_color=self.themes["app_color"]["white"],
+                                        border_radius="5px")
+        self.data_management_progress_bar.setMaximumSize(QSize(600, 100))
+        self.data_management_progress_bar.setObjectName(u"data_management_progress_bar")
+        self.data_management_progress_bar.setOrientation(Qt.Horizontal)
+        self.data_management_progress_bar.setRange(0, 100)
+        self.data_management_progress_bar.setValue(0)
+        self.data_management_progress_bar.hide()
+        self.data_management_progress_bar.setAlignment(Qt.AlignHCenter)
+        self.datamanagement_page_layout.addWidget(self.data_management_progress_bar, 0, Qt.AlignHCenter)
+        self.datamanagement_page_layout.addSpacing(5)
+
+        
+        # add a label to show the status of the export
+        self.data_management_status_label = QLabel(self.datamanagement_page)
+        self.data_management_status_label.setObjectName(u"data_management_status_label")
+        self.data_management_status_label.setAlignment(Qt.AlignCenter)
+        self.data_management_status_label.setText(" ")
+        self.datamanagement_page_layout.addWidget(self.data_management_status_label)
+        self.datamanagement_page_layout.addSpacing(5)
+
+
+        # add a button to export the results
+        if self.settings["language"] == "eng":
+            text = "Export Results"
+        elif self.settings["language"] == "de":
+            text = "Ergebnisse exportieren"
+        self.export_results_btn = PyPushButton(
+            parent=self.datamanagement_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.export_results_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))
+        self.datamanagement_page_layout.addWidget(self.export_results_btn, 0, Qt.AlignCenter)
+        self.export_results_btn.clicked.connect(self.export_results)
+
+        self.export_results_btn_icon = QIcon(Functions.set_svg_icon("export_white.svg"))
+        self.export_results_btn.setIcon(self.export_results_btn_icon)
+        self.export_results_btn.setIconSize(QSize(30, 30))
+
+        # add a button to rename the selected trial
+        if self.settings["language"] == "eng":
+            text = "Rename Trial"
+        elif self.settings["language"] == "de":
+            text = "Versuch umbenennen"
+        self.rename_trial_btn = PyPushButton(
+            parent=self.datamanagement_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.rename_trial_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))
+        self.datamanagement_page_layout.addWidget(self.rename_trial_btn, 0, Qt.AlignCenter)
+        self.rename_trial_btn.clicked.connect(self.rename_trial)
+        self.rename_trial_btn_icon = QIcon(Functions.set_svg_icon("rename_white.svg"))
+        self.rename_trial_btn.setIcon(self.rename_trial_btn_icon)
+        self.rename_trial_btn.setIconSize(QSize(30, 30))
+
+        # add a button to delete only the predictions of the selected trial
+        if self.settings["language"] == "eng":
+            text = "Delete Predictions"
+        elif self.settings["language"] == "de":
+            text = "Prognosen löschen"
+        self.delete_predictions_btn = PyPushButton(
+            parent=self.datamanagement_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.delete_predictions_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))
+        self.delete_predictions_btn.clicked.connect(self.delete_predictions)
+        self.delete_predictions_btn_icon = QIcon(Functions.set_svg_icon("delete_white.svg"))
+        self.delete_predictions_btn.setIcon(self.delete_predictions_btn_icon)
+        self.delete_predictions_btn.setIconSize(QSize(30, 30))
+
+
+        # add a button to delete the selected trial
+        if self.settings["language"] == "eng":
+            text = "Delete Trial"
+        elif self.settings["language"] == "de":
+            text =  "Versuch löschen"
+        self.delete_trial_btn = PyPushButton(
+            parent=self.datamanagement_page,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.delete_trial_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))
+
+        self.delete_trial_btn.clicked.connect(self.delete_trial)
+        self.delete_trial_btn_icon = QIcon(Functions.set_svg_icon("delete_white.svg"))
+        self.delete_trial_btn.setIcon(self.delete_trial_btn_icon)
+        self.delete_trial_btn.setIconSize(QSize(30, 30))
+
+        button_layout = QHBoxLayout()   
+        button_layout.addWidget(self.export_results_btn)
+        button_layout.addSpacing(100)
+        button_layout.addWidget(self.rename_trial_btn, 0, Qt.AlignCenter)
+        button_layout.addSpacing(100)
+        button_layout.addWidget(self.delete_predictions_btn)
+        button_layout.addSpacing(100)
+        button_layout.addWidget(self.delete_trial_btn)
+        self.datamanagement_page_layout.addLayout(button_layout)
+        self.datamanagement_page_layout.setAlignment(Qt.AlignCenter)
+        self.datamanagement_page_layout.addSpacing(50)
+
+
+        # add the page to the stack
+        self.pages.addWidget(self.datamanagement_page)
+
+
+    def delete_predictions(self):
+        """
+        Delete the predictions of the selected trial
+        """
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_datamanagement_page.currentText()
+        if selected_trial == "Select Trial" or selected_trial == "No Trials" or selected_trial == "Keine Versuche" or selected_trial == "Versuch auswählen":
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.datamanagement_page, "Warning", "Please select a trial to delete the predictions")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.datamanagement_page, "Warnung", "Bitte wählen Sie einen Versuch aus, um die Prognosen zu löschen")
+        elif selected_trial == "All Trials" or selected_trial == "Alle Versuche":
+            # ask the user if they are sure they want to delete all the predictions
+            if self.settings["language"] == "eng":
+                message = "Are you sure you want to delete all the predictions?"
+            elif self.settings["language"] == "de":
+                message = "Möchten Sie wirklich alle Prognosen löschen?"
+            reply = QtWidgets.QMessageBox.question(self.datamanagement_page, "Message", message, QtWidgets.QMessageBox.Yes, QtWidgets.QMessageBox.No)
+            if reply == QtWidgets.QMessageBox.Yes:
+                # delete the predictions of all the trials
+                self.delete_predictions_thread = DeleteThread(parent=self.datamanagement_page, delete_function=self.delete_predictions_for_multiple_trials())
+                self.delete_predictions_thread.start()
+                self.delete_predictions_thread.finished_signal.connect(self.delete_predictions_finished_slot)
+                self.delete_predictions_thread.progress_signal.connect(self.data_management_progress_bar.setValue)
+                self.delete_predictions_thread.status_signal.connect(self.data_management_status_label.setText)
+        else:
+            # get the selected trial
+            selected_trial = self.trial_selection_combo_datamanagement_page.currentText()
+            # set the text of the status label
+            if self.settings["language"] == "eng":
+                self.data_management_status_label.setText(f"Deleting predictions for trial {selected_trial}")
+            elif self.settings["language"] == "de":
+                self.data_management_status_label.setText(f"Prognosen für Versuch {selected_trial} werden gelöscht")
+            trial_dir = os.path.join(self.imported_files_dir, selected_trial)
+            if isinstance(trial_dir, tuple):
+                trial_dir = trial_dir[0]
+            # delete the predictions
+            self.delete_predictions_thread = DeleteThread(parent=self.datamanagement_page, delete_function=self.delete_predictions_function(trial_dir))
+            self.delete_predictions_thread.start()
+            self.delete_predictions_thread.finished_signal.connect(self.delete_predictions_finished_slot)
+            self.delete_predictions_thread.status_signal.connect(self.data_management_status_label.setText)
+
+    def delete_predictions_function(self, trial_dir):
+        """
+        Delete the predictions of the selected trial
+        """
+        predictions_dir = os.path.join(trial_dir, "predictions")
+        if os.path.exists(predictions_dir):
+            shutil.rmtree(predictions_dir)
+        coco_dir = os.path.join(trial_dir, "coco")
+        if os.path.exists(coco_dir):
+            shutil.rmtree(coco_dir)
+        
+        xlsx_file = os.path.join(trial_dir, "instances_results.xlsx")
+        if os.path.exists(xlsx_file):
+            os.remove(xlsx_file)
+        
+        json_file = os.path.join(trial_dir, "instances_results.json")
+        if os.path.exists(json_file):
+            os.remove(json_file)
+
+        csv_file = os.path.join(trial_dir, "instances_results.csv")
+        if os.path.exists(csv_file):
+            os.remove(csv_file)
+        
+        segmentation_dir = os.path.join(trial_dir, "segmentation_masks")
+        if os.path.exists(segmentation_dir):
+            shutil.rmtree(segmentation_dir)
+        
+
+        yield 100, "Predictions deleted successfully"
+        #QtWidgets.QMessageBox.information(self.datamanagement_page, "Info", "Predictions deleted successfully")
+    
+    def delete_predictions_for_multiple_trials(self):
+        """
+        Delete the predictions of the selected trial
+        """
+        for idx, trial in enumerate(self.get_trial_folders()):
+            trial_dir = os.path.join(self.imported_files_dir, trial)
+            if self.settings["language"] == "eng":
+                text = f"Deleting predictions for trial {trial}" + f" ({idx + 1}/{len(self.get_trial_folders())})"
+                self.data_management_status_label.setText(text)
+            elif self.settings["language"] == "de":
+                text = f"Prognosen für Versuch {trial} werden gelöscht" + f" ({idx + 1}/{len(self.get_trial_folders())})"
+                self.data_management_status_label.setText(text)
+            
+            predictions_dir = os.path.join(trial_dir, "predictions")
+            if os.path.exists(predictions_dir):
+                shutil.rmtree(predictions_dir)
+            progress = (idx + 1) / len(self.get_trial_folders()) * 100
+            yield progress, f"Predictions deleted successfully for {trial}"
+        
+    def delete_predictions_finished_slot(self, value):
+        print(f"Delete predictions finished: {value}")
+        self.data_management_progress_bar.hide()
+        if value == False:
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.warning(self.datamanagement_page, "Warning", "Failed to delete the AI-Predictions")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.warning(self.datamanagement_page, "Warnung", "KI-Vorhersagen konnten nicht gelöscht werden")
+        else:
+            if self.settings["language"] == "eng":
+                QtWidgets.QMessageBox.information(self.datamanagement_page, "Info", "AI-Predictions deleted successfully")
+            elif self.settings["language"] == "de":
+                QtWidgets.QMessageBox.information(self.datamanagement_page, "Info", "KI-Vorhersagen erfolgreich gelöscht")
+
+        # wait for a few seconds before hiding the status label
+        time.sleep(2)
+        self.data_management_status_label.setText(" ")
+
+
+    def export_results(self):
+        """
+        Export the results of the selected trial
+        """
+
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_datamanagement_page.currentText()
+        if selected_trial == "Select Trial" or selected_trial == "Versuch auswählen":
+            if self.settings["language"] == "eng":
+                warning_name = "Warning"
+                warning_message = "Please select a trial to export"
+            elif self.settings["language"] == "de":
+                warning_name = "Warnung"
+                warning_message = "Bitte wählen Sie einen Versuch zum Exportieren"
+            QtWidgets.QMessageBox.warning(self.datamanagement_page, warning_name, warning_message)
+        elif selected_trial == "No Trials" or selected_trial == "Keine Versuche":
+            if self.settings["language"] == "eng":
+                warning_name = "Warning"
+                warning_message = "No trials to export"
+            elif self.settings["language"] == "de":
+                warning_name = "Warnung"
+                warning_message = "Keine Versuche zum Exportieren"
+            QtWidgets.QMessageBox.warning(self.datamanagement_page, warning_name, warning_message)
+        elif selected_trial == "All Trials" or selected_trial == "Alle Versuche":
+
+            # set label to "Exporting results ..."
+            if self.settings["language"] == "eng":
+                self.data_management_status_label.setText("Exporting results ...")
+            elif self.settings["language"] == "de":
+                self.data_management_status_label.setText("Ergebnisse werden exportiert ...")
+
+            # get the destination directory
+            if self.settings["language"] == "eng":
+                message = "Select a directory to save the results"  
+            elif self.settings["language"] == "de":
+                message = "Wählen Sie ein Verzeichnis, um die Ergebnisse zu speichern"
+            destination_dir = QFileDialog.getExistingDirectory(self.datamanagement_page, message, options=QFileDialog.ShowDirsOnly)
+            final_destination_dir = os.path.join(destination_dir)
+            # create a export thread
+            self.export_thread = ExportThread(parent=self.datamanagement_page, export_function=self.export_results_directories(final_destination_dir))
+            self.export_thread.start()
+            self.export_thread.finished_signal.connect(self.export_finished_slot)
+            self.export_thread.progress_signal.connect(self.data_management_progress_bar.setValue)
+            self.export_thread.status_signal.connect(self.data_management_status_label.setText)
+
+            # remove the trial from the combo box
+            self.refresh_trial_folder_names()
+        else:
+            # get the selected trial
+            selected_trial = self.trial_selection_combo_datamanagement_page.currentText()
+            trial_dir = os.path.join(self.imported_files_dir, selected_trial)
+            if isinstance(trial_dir, tuple):
+                trial_dir = trial_dir[0]
+
+            # get the destination directory
+            if self.settings["language"] == "eng":   
+                message = f"Export results for trial {selected_trial} to the selected directory"
+            elif self.settings["language"] == "de":
+                message = f"Exportieren Sie die Ergebnisse für den Versuch {selected_trial} in das ausgewählte Verzeichnis"
+            destination_dir = QFileDialog.getExistingDirectory(self.datamanagement_page, message, options=QFileDialog.ShowDirsOnly)
+            final_destination_dir = os.path.join(destination_dir, selected_trial)
+
+
+            # create a export thread
+            self.export_thread = ExportThread(parent=self.datamanagement_page, export_function=self.export_results_directory(trial_dir, final_destination_dir))
+            self.export_thread.start()
+            self.export_thread.finished_signal.connect(self.export_finished_slot)
+            self.export_thread.progress_signal.connect(self.data_management_progress_bar.setValue)
+            self.export_thread.status_signal.connect(self.data_management_status_label.setText)
+
+            # remove the trial from the combo box
+            self.refresh_trial_folder_names()      
+
+    def export_finished_slot(self, value):
+        print(f"Export finished: {value}")
+        self.data_management_progress_bar.hide()
+        if self.settings["language"] == "eng":
+            self.data_management_status_label.setText("Export completed")
+            QtWidgets.QMessageBox.information(self.datamanagement_page, "Info", "Export completed")
+        elif self.settings["language"] == "de":
+            self.data_management_status_label.setText("Export abgeschlossen")
+            QtWidgets.QMessageBox.information(self.datamanagement_page, "Info", "Export abgeschlossen")
+
+        # wait for a few seconds before hiding the status label
+        time.sleep(2)
+        self.data_management_status_label.setText(" ")
+
+    def export_results_directory(self, trial_dir, destination_dir):
+
+        """
+        Export the results of the selected trial
+        """
+        if self.settings["language"] == "eng":
+            status = f"Exporting results for trial {os.path.basename(trial_dir)}"
+        elif self.settings["language"] == "de":
+            status = f"Exportiere Ergebnisse für Versuch {os.path.basename(trial_dir)}"
+        if destination_dir:
+            # create a directory for the trial in the destination directory
+            destination_dir = os.path.join(destination_dir, os.path.basename(trial_dir))
+            if not os.path.exists(destination_dir):
+                os.makedirs(destination_dir)
+
+            # copy the results to the selected directory
+            shutil.copytree(trial_dir, destination_dir, dirs_exist_ok=True)
+        if self.settings["language"] == "eng":
+            final_status = "Export completed"
+        elif self.settings["language"] == "de":
+            final_status = "Export abgeschlossen"
+
+
+        yield 100, final_status
+
+
+    def export_results_directories(self, destination_dir):
+        """
+        Export the results of the selected trial
+        """
+
+        #trial_dirs = [os.path.join(self.imported_files_dir, trial) for trial in self.get_trial_folders() if trial != "Select Trial" and trial != "All Trials"]
+        
+        
+        trial_dirs = [os.path.join(self.imported_files_dir, trial) for trial in self.get_trial_folders() if trial not in self.folder_translation.values()]
+
+        for trial_dir in trial_dirs:
+            # create a directory for the trial in the destination directory
+            process = int((trial_dirs.index(trial_dir) + 1) / len(trial_dirs) * 100)
+            if self.settings["language"] == "eng":
+                status = f"Exporting results for trial {os.path.basename(trial_dir)}" + f" ({int(trial_dirs.index(trial_dir) + 1)}" + "/" + f"{len(trial_dirs)}) ..."
+            elif self.settings["language"] == "de":
+                status = f"Exportiere Ergebnisse für Versuch {os.path.basename(trial_dir)} " + f" ({int(trial_dirs.index(trial_dir) + 1)}" + "/" + f"{len(trial_dirs)}) ..."
+            yield process, status
+            trial_name = os.path.basename(trial_dir)
+            final_destination_dir = os.path.join(destination_dir, trial_name)
+            if not os.path.exists(final_destination_dir):
+                os.makedirs(final_destination_dir)
+            # copy the results to the selected directory
+            shutil.copytree(trial_dir, final_destination_dir, dirs_exist_ok=True)
+            
+        if self.settings["language"] == "en":# set the final status
+            final_status = "Export completed"
+        elif self.settings["language"] == "de":
+            final_status = "Export abgeschlossen"
+        else:
+            final_status = "Export completed"
+        yield 100, final_status
+  
+
+    def rename_trial(self):
+            """
+            Rename the selected trial
+            """
+            # get the selected trial
+            selected_trial = self.trial_selection_combo_datamanagement_page.currentText()
+            if selected_trial == "Select Trial" or selected_trial == "No Trials" or selected_trial == "Keine Versuche":
+                if self.settings["language"] == "eng":
+                    warning_name = "Warning"
+                    warning_message = "Please select a trial to rename"
+                elif self.settings["language"] == "de":
+                    warning_name = "Warnung"
+                    warning_message = "Bitte wählen Sie einen Versuch zum Umbenennen"
+                QtWidgets.QMessageBox.warning(self.datamanagement_page, warning_name, warning_message)
+            else:
+                # get the new name of the trial
+                if self.settings["language"] == "eng":
+                    new_trial_name, ok = QtWidgets.QInputDialog.getText(self.datamanagement_page, "Rename Trial", "Enter the new name of the trial")
+                elif self.settings["language"] == "de":
+                    new_trial_name, ok = QtWidgets.QInputDialog.getText(self.datamanagement_page, "Versuch umbenennen", "Geben Sie den neuen Namen des Versuchs ein")
+                if ok:
+                    # get the directory of the selected trial
+                    trial_dir = os.path.join(self.imported_files_dir, selected_trial)
+                    if isinstance(trial_dir, tuple):
+                        trial_dir = trial_dir[0]
+                    # get the new directory
+                    new_trial_dir = os.path.join(self.imported_files_dir, new_trial_name)
+                    # rename the trial
+                    try:
+                        os.rename(trial_dir, new_trial_dir)
+                        # refresh the trial folder names
+                        self.refresh_trial_folder_names()
+                        # show a message box
+                        if self.settings["language"] == "eng":
+                            warning_name = "Info"
+                            warning_message = "Trial renamed successfully"
+                        elif self.settings["language"] == "de":
+                            warning_name = "Info"
+                            warning_message = "Versuch erfolgreich umbenannt"
+                        QtWidgets.QMessageBox.information(self.datamanagement_page, warning_name, warning_message)	
+                    except Exception as e:
+                        if self.settings["language"] == "eng":
+                            warning_name = "Warning"
+                            warning_message = f"Failed to rename the trial: {e}"
+                        elif self.settings["language"] == "de":
+                            warning_name = "Warnung"
+                            warning_message = f"Versuch konnte nicht umbenannt werden: {e}"
+                        QtWidgets.QMessageBox.warning(self.datamanagement_page, warning_name, warning_message)
+
+
+
+    def delete_trial(self):
+        """
+        Delete the selected trial
+        """
+        # remove the trial from the combo box
+        #self.refresh_trial_folder_names()
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_datamanagement_page.currentText()
+        print(f"Selected trial current text: {selected_trial}")
+        if selected_trial == "Select Trial":
+            if self.settings["language"] == "eng":
+                warning_name = "Warning"
+                warning_message = "Please select a trial to delete"
+            elif self.settings["language"] == "de":
+                warning_name = "Warnung"
+                warning_message = "Bitte wählen Sie einen Versuch zum Löschen aus"
+            QtWidgets.QMessageBox.warning(self.datamanagement_page, warning_name, warning_message)
+        elif selected_trial == "All Trials":
+            if self.settings["language"] == "eng":
+                warning_name = "Warning"
+                warning_message = "Are you sure you want to delete ALL trials?"
+            elif self.settings["language"] == "de":
+                warning_name = "Warnung"
+                warning_message = "Sind Sie sicher, dass Sie ALLE Versuche löschen möchten?"
+            if QtWidgets.QMessageBox.question(self.datamanagement_page, warning_name, warning_message) == QtWidgets.QMessageBox.Yes:
+                # create a delete thread
+                self.delete_thread = DeleteThread(parent=self.datamanagement_page, delete_function=self.delete_trial_directories())
+                self.delete_thread.start()
+                self.delete_thread.finished_signal.connect(self.delete_finished_slot)
+                self.delete_thread.status_signal.connect(self.data_management_status_label.setText)       
+            else:
+                return
+        elif selected_trial == "No Trials" or selected_trial == "Keine Versuche":
+            if self.settings["language"] == "eng":
+                warning_name = "Warning"
+                warning_message = "No trials to delete"
+            elif self.settings["language"] == "de":
+                warning_name = "Warnung"
+                warning_message = "Keine Versuche zum Löschen"
+            QtWidgets.QMessageBox.warning(self.datamanagement_page, warning_name, warning_message)
+        else:
+            # get the selected trial
+            selected_trial = self.trial_selection_combo_datamanagement_page.currentText()
+            trial_dir = os.path.join(self.imported_files_dir, selected_trial)
+            if isinstance(trial_dir, tuple):
+                trial_dir = trial_dir[0]
+
+            if self.settings["language"] == "eng":
+                trial_dir_message = f"Are you sure you want to delete the trial '{os.path.basename(trial_dir)}'?"
+                trial_dir_message_name = "Delete Trial"
+            elif self.settings["language"] == "de":
+                trial_dir_message = f"Sind Sie sicher, dass Sie den Versuch '{os.path.basename(trial_dir)}' löschen möchten?"
+                trial_dir_message_name = "Versuch löschen"
+
+            if QtWidgets.QMessageBox.question(self.datamanagement_page, trial_dir_message_name, trial_dir_message) == QtWidgets.QMessageBox.Yes:
+                # create a delete thread
+                self.delete_thread = DeleteThread(parent=self.datamanagement_page, delete_function=self.delete_trial_directory(trial_dir))
+                self.delete_thread.start()
+                self.delete_thread.finished_signal.connect(self.delete_finished_slot)
+                self.delete_thread.status_signal.connect(self.data_management_status_label.setText)
+
+            else:
+                return
+
+    def delete_finished_slot(self, value):
+        print(f"Delete finished: {value}")
+        #self.data_management_progress_bar.hide()
+        if self.settings["language"] == "eng":
+            self.data_management_status_label.setText("Delete completed")
+            QtWidgets.QMessageBox.information(self.datamanagement_page, "Info", "Delete completed")
+        elif self.settings["language"] == "de":
+            self.data_management_status_label.setText("Löschen abgeschlossen")
+            QtWidgets.QMessageBox.information(self.datamanagement_page, "Info", "Löschen abgeschlossen")
+        # wait for a few seconds before hiding the status label
+        time.sleep(2)
+        self.data_management_status_label.setText(" ")
+        self.refresh_trial_folder_names()
+
+    def delete_trial_directory(self, trial_dir):
+        """
+        Delete the selected trial
+        """
+        # delete the trial directory
+        shutil.rmtree(trial_dir)
+        if self.settings["language"] == "eng":
+            yield 100, "Delete completed"
+        elif self.settings["language"] == "de":
+            yield 100, "Löschen abgeschlossen"
+    
+    def delete_trial_directories(self):
+        """
+        Delete the selected trial
+        """
+        # get the destination directory
+        trial_dirs = [os.path.join(self.imported_files_dir, trial) for trial in self.get_trial_folders() if trial not in self.folder_translation.values()]
+        for trial_dir in trial_dirs:
+            process = int((trial_dirs.index(trial_dir) + 1) / len(trial_dirs) * 100)
+            if self.settings["language"] == "eng":
+                status = f"Deleting trial {trial_dir}" + f" ({trial_dirs.index(trial_dir) + 1}/{len(trial_dirs)})"
+            elif self.settings["language"] == "de":
+                status = f"Lösche Versuch {trial_dir}" + f" ({trial_dirs.index(trial_dir) + 1}/{len(trial_dirs)})"
+            yield process, status
+            try:
+                shutil.rmtree(trial_dir)
+            except Exception as e:
+                print(f"Error deleting trial: {e}")
+
+                if self.settings["language"] == "eng":
+                    warning_name = "Warning"
+                    warning_message = f"Failed to delete trial {os.path.basename(trial_dir)}"
+                elif self.settings["language"] == "de":
+                    warning_name = "Warnung"
+                    warning_message = f"Versuch {os.path.basename(trial_dir)} konnte nicht gelöscht werden"
+                yield 100, warning_message
+
+            if self.settings["language"] == "eng":
+                status = f"Deleting trial {trial_dirs.index(trial_dir) + 1} of {len(trial_dirs)}"
+            elif self.settings["language"] == "de":
+                status = f"Lösche Versuch {trial_dirs.index(trial_dir) + 1} von {len(trial_dirs)}"
+            yield process, status
+        
+        if self.settings["language"] == "eng":
+            yield 100, "Delete completed"
+        elif self.settings["language"] == "de":
+            yield 100, "Löschen abgeschlossen"
+
+
+
+    # ----- SETUP TRAINER PAGE ----- #
+    def refresh_train_data_dirs(self):
+        """
+        Refresh the directories of the trials to train the AI model on
+        """
+        self.trial_selection_combo_trainer_page.clear()
+        self.trial_selection_combo_trainer_page.addItems(self.get_train_data_dirs())
+    
+    def get_train_data_dirs(self):
+        """
+        list all the directories in the train data directory
+        """
+        train_data_dirs = [dir for dir in os.listdir(self.ai_train_dir) if os.path.isdir(os.path.join(self.ai_train_dir, dir))]
+        if len(train_data_dirs) == 0:
+            if self.settings["language"] == "eng":
+                train_data_dirs = ["No Trials"]
+            elif self.settings["language"] == "de":
+                train_data_dirs = ["Keine Versuche"]
+        else:
+            if self.settings["language"] == "eng":
+                train_data_dirs = ["Select Trial"] + train_data_dirs
+            elif self.settings["language"] == "de":
+                train_data_dirs = ["Versuch auswählen"] + train_data_dirs
+        return train_data_dirs
+
+    def setup_trainer_page(self):
+        self.ai_train_dir = "ai_train_datasets"
+        if not os.path.exists(self.ai_train_dir):
+            os.makedirs(self.ai_train_dir)
+
+        self.trainer_page = QWidget()
+        self.trainer_page.setObjectName(u"trainer_page")
+        self.trainer_page.setStyleSheet(u"font-size: 14pt")
+        self.trainer_page_layout = QVBoxLayout(self.trainer_page)
+        self.trainer_page_layout.setObjectName(u"trainer_page_layout")
+        self.trainer_page_label = QLabel(self.trainer_page)
+        self.trainer_page_label.setObjectName(u"trainer_page_label")
+        self.trainer_page_label.setAlignment(Qt.AlignCenter)
+        self.trainer_page_layout.addWidget(self.trainer_page_label)
+        self.pages.addWidget(self.trainer_page)
+
+        # add a combo box to select the trial
+        self.trainer_page_label.setText("Trainer Page")
+        self.trainer_page_layout.addWidget(self.trainer_page_label)
+        self.trainer_page_layout.setAlignment(Qt.AlignCenter)
+        self.trainer_page_layout.addSpacing(20)
+
+        # add pixmap
+        self.trainer_page_pixmap = QLabel(self.trainer_page)
+        self.trainer_page_pixmap.setObjectName(u"trainer_page_pixmap")
+        self.trainer_page_pixmap.setAlignment(Qt.AlignCenter)
+        self.trainer_page_pixmap.setPixmap(QPixmap(Functions.set_image(Functions.set_svg_icon("AI_icon_grey.svg"))))
+        self.trainer_page_layout.addWidget(self.trainer_page_pixmap)
+
+
+
+        self.trial_selection_label_trainer = QLabel(self.trainer_page)
+        self.trial_selection_label_trainer.setObjectName(u"trial_selection_label_trainer")
+        self.trial_selection_label_trainer.setAlignment(Qt.AlignCenter)
+        self.trial_selection_label_trainer.setText("Select a trial to train the AI model on")
+        self.trainer_page_layout.addWidget(self.trial_selection_label_trainer)
+
+        # create a combo box to select the trial
+        self.trial_selection_combo_trainer_page = PyComboBox(self.trainer_page)
+        self.trial_selection_combo_trainer_page.setGeometry(QRect(0, 0, 200, 500))
+        self.trial_selection_combo_trainer_page.setObjectName(u"trial_selection_combo_trainer_page")
+        #self.trial_selection_combo_trainer_page.addItem("Select Trial")
+        self.trial_selection_combo_trainer_page.addItems(self.get_train_data_dirs())
+        self.trainer_page_layout.addWidget(self.trial_selection_combo_trainer_page, 0, Qt.AlignHCenter)
+
+        # add a label indicating the ETA of the training
+        #self.training_ETA_label = QLabel(self.trainer_page)
+        #self.training_ETA_label.setObjectName(u"training_ETA_label")
+        #self.training_ETA_label.setAlignment(Qt.AlignCenter)
+        #self.training_ETA_label.setText(" ")
+        #self.trainer_page_layout.addWidget(self.training_ETA_label)
+        #self.trainer_page_layout.addSpacing(5)
+
+        # add a progress bar to show the progress of the training; hide it initially but show it when the training starts
+        self.training_progress_bar = PYProgressBar(parent=self.trainer_page,
+                                        color = "black",
+                                        bg_color = self.themes["app_color"]["context_color"],
+                                        border_color=self.themes["app_color"]["white"],
+                                        border_radius="5px")
+        self.training_progress_bar.setMaximumSize(QSize(600, 100))
+        self.training_progress_bar.setObjectName(u"training_progress_bar")
+        self.training_progress_bar.setOrientation(Qt.Horizontal)
+        self.training_progress_bar.setRange(0, 100)
+        self.training_progress_bar.setValue(0)
+        self.training_progress_bar.hide()
+        self.training_progress_bar.setAlignment(Qt.AlignHCenter)
+        self.trainer_page_layout.addWidget(self.training_progress_bar, 0, Qt.AlignHCenter)
+        self.trainer_page_layout.addSpacing(5)
+        
+        # add a label to show the status of the training
+        self.training_status_label = QLabel(self.trainer_page)
+        self.training_status_label.setObjectName(u"training_status_label")
+        self.training_status_label.setAlignment(Qt.AlignCenter)
+        self.training_status_label.setText(" ")
+
+        self.trainer_page_layout.addWidget(self.training_status_label)
+        self.trainer_page_layout.addSpacing(5)
+
+        # add a button to open the nuclei pre-annotation tool
+        self.open_nuclei_annotation_tool_btn = PyPushButton(
+            parent=self.trainer_page,
+            text="Open Nuclei Annotation Tool",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.open_nuclei_annotation_tool_btn_icon = QIcon(Functions.set_svg_icon("nucleus_white.svg"))
+        self.open_nuclei_annotation_tool_btn.setIcon(self.open_nuclei_annotation_tool_btn_icon)
+        self.open_nuclei_annotation_tool_btn.setIconSize(QSize(30, 30))
+
+        self.open_nuclei_annotation_tool_btn.setGeometry(QtCore.QRect(25, 25, 200, 100))
+        self.trainer_page_layout.addWidget(self.open_nuclei_annotation_tool_btn, 0, Qt.AlignCenter)
+        self.open_nuclei_annotation_tool_btn.clicked.connect(self.open_nuclei_annotation_toolbox)
+
+
+
+        # add a button to train the AI model
+        self.train_model_btn = PyPushButton(
+            parent=self.trainer_page,
+            text="Train Model",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.train_model_btn.setGeometry(QtCore.QRect(25, 25, 400, 200))
+        self.trainer_page_layout.addWidget(self.train_model_btn, 0, Qt.AlignCenter)
+        self.trainer_page_layout.setSpacing(50)
+        self.train_model_btn.clicked.connect(self.train_model)
+
+        self.train_model_btn_icon = QIcon(Functions.set_svg_icon("trainer_white.svg"))
+        self.train_model_btn.setIcon(self.train_model_btn_icon)
+        self.train_model_btn.setIconSize(QSize(30, 30))
+
+
+
+        # add a buttun to stop the training
+        self.stop_training_btn = PyPushButton(
+            parent=self.trainer_page,
+            text="Stop Training",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"])
+        self.stop_training_btn.setGeometry(QtCore.QRect(25, 25, 400, 200))
+        self.trainer_page_layout.addWidget(self.stop_training_btn, 0, Qt.AlignCenter)
+        self.trainer_page_layout.setSpacing(50)
+        self.stop_training_btn.clicked.connect(self.stop_training)
+
+        self.stop_training_btn_icon = QIcon(Functions.set_svg_icon("stop_icon.svg"))
+        self.stop_training_btn.setIcon(self.stop_training_btn_icon)
+        self.stop_training_btn.setIconSize(QSize(30, 30))
+
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.open_nuclei_annotation_tool_btn)
+        button_layout.addSpacing(200)
+        button_layout.addWidget(self.train_model_btn)
+        button_layout.addSpacing(200)
+        button_layout.addWidget(self.stop_training_btn)
+        self.trainer_page_layout.addLayout(button_layout)
+        self.trainer_page_layout.setAlignment(Qt.AlignCenter)
+        self.trainer_page_layout.addSpacing(50)
+
+
+
+
+        # add the page to the stack
+        self.pages.addWidget(self.trainer_page)
+
+    def open_nuclei_annotation_toolbox(self):
+        """
+        Open the nuclei annotation tool
+        """
+        # open the nuclei annotation tool
+        #self.nuclei_annotation_tool = NucleiAnnotationToolbox(parent=self.trainer_page)
+        self.open_nuclei_annotation_tool = NucleiAnnotationToolbox()
+        #self.nuclei_annotation_tool.show()
+        self.open_nuclei_annotation_tool.show()
+
+    def stop_training(self):
+        """
+        Stop the training process
+        """
+        self.stop_training_process = True
+
+        if hasattr(self, "train_thread"):
+            self.train_thread.terminate()
+            self.train_thread = None
+    
+        #QtWidgets.QMessageBox.information(self.trainer_page, "Info", "Training stopped")
+
+        self.training_progress_bar.hide()
+        if self.settings["language"] == "eng":
+            self.training_status_label.setText("Training stopped")
+        elif self.settings["language"] == "de":
+            self.training_status_label.setText("Training gestoppt")
+
+
+    def train_model(self):
+        """
+        Train the AI model on the selected trial
+        """
+        # show the progress bar
+        self.training_progress_bar.show()
+        self.training_progress_bar.setValue(0)
+        if self.settings["language"] == "eng":
+            self.training_status_label.setText("Training model ...")
+        elif self.settings["language"] == "de":
+            self.training_status_label.setText("Modelltraining ...")  
+
+        # get the selected trial
+        selected_trial = self.trial_selection_combo_trainer_page.currentText()
+        if selected_trial == "Select Trial":
+            QtWidgets.QMessageBox.warning(self.trainer_page, "Warning", "Please select a trial to train the model on")
+        else:
+            # get the selected trial
+            selected_train_data_dir = self.trial_selection_combo_trainer_page.currentText()
+            train_data_dir = os.path.join(self.ai_train_dir, selected_train_data_dir)
+            if isinstance(train_data_dir, tuple):
+                train_data_dir = train_data_dir[0]
+
+            # create a train thread
+            self.train_thread = TrainThread(parent=self.trainer_page, train_function=self.train_model_on_train_data_dir(train_data_dir))
+            self.train_thread.start()
+            self.train_thread.finished_signal.connect(self.train_finished_slot)
+            self.train_thread.time_left_signal.connect(self.training_ETA_label.setText)
+            self.train_thread.status_signal.connect(self.training_status_label.setText)
+
+    def train_finished_slot(self, value):
+        print(f"Training finished: {value}")
+        self.training_progress_bar.hide()
+        if self.settings["language"] == "eng":
+            self.training_status_label.setText("Training completed")
+            QtWidgets.QMessageBox.information(self.trainer_page, "Info", "Training completed")
+        elif self.settings["language"] == "de":
+            self.training_status_label.setText("Training abgeschlossen")
+            QtWidgets.QMessageBox.information(self.trainer_page, "Info", "Training abgeschlossen")
+        
+
+    def setup_train_config(self, train_data_dir):
+        """
+        Set up the configuration dictionary
+        """
+        config_dict = {
+            "use_cuda": True,
+            "num_classes": 2,
+            "lr": 0.001,
+            "epochs": 10,
+            "batch_size": 1,
+            "backbone": "resnet50",
+            "optimizer": "SGD",
+            "momentum": 0.9,
+            "weight_decay": 0.0005,
+            "data_dir": train_data_dir,
+            "checkpoints_dir": "training_checkpoints",
+            "do_evaluation_during_training": True,
+            "perform_slicing": True,
+            "print_freq": 400,
+            "eval_freq": 1,
+            "do_model_evaluation": False,
+            "pretrained": True,
+            "trainable_layers": 3,
+        }
+        return config_dict
+
+    def train_model_on_train_data_dir(self, train_data_dir):
+        """
+        Train the AI model on the selected trial
+        """
+        print(f"Training model on trial: {train_data_dir}")
+        # train the model on the selected trial
+
+        # get the configuration dictionary  
+        config_dict = self.setup_train_config(train_data_dir)
+
+        # create a model interface with the current trial as output directory
+        trainer_object = Trainer(config_dict=config_dict)
+        for time_left in trainer_object.run():
+            yield time_left, "Training model on trial"
+        #trainer_object.run()
+
+
+
+
+    def retranslateUi(self, MainPages):
+        MainPages.setWindowTitle(QCoreApplication.translate("MainPages", u"Form", None))
+        self.label.setText(QCoreApplication.translate("MainPages", u"Welcome to AI Cell Detection", None))
+        
+        self.settings = Settings().items
+        self.language = self.settings["language"]
+        self.folder_translation = {"eng": ["Select Trial", "All Trials", "No Trials"], "de": ["Versuch auswählen", "Alle Versuche", "Keine Versuche"]}
+
+        if self.language == "eng":
+            self.label.setText(QCoreApplication.translate("MainPages", u"Welcome to AI Cell Detection", None))
+            #self.import_status_label.setText(QCoreApplication.translate("MainPages", u"Import Status", None))
+
+            self.trial_selection_label_results.setText(QCoreApplication.translate("MainPages", u"Select a trial to view the results", None))
+            self.export_results_btn.setText(QCoreApplication.translate("MainPages", u"Export Results", None))
+
+            self.datamanagement_page_label.setText(QCoreApplication.translate("MainPages", u"Data Management", None))
+            self.trial_selection_label_datamanagement.setText(QCoreApplication.translate("MainPages", u"Select a trial to manage", None))
+            self.delete_trial_btn.setText(QCoreApplication.translate("MainPages", u"Delete Trial", None))
+
+            
+            #self.trainer_page_label.setText(QCoreApplication.translate("MainPages", u"Trainer Page", None))
+            #self.trial_selection_label_trainer.setText(QCoreApplication.translate("MainPages", u"Select a trial to train the AI model on", None))
+            #self.open_nuclei_annotation_tool_btn.setText(QCoreApplication.translate("MainPages", u"Open Nuclei Annotation Tool", None))
+            #self.train_model_btn.setText(QCoreApplication.translate("MainPages", u"Train Model", None))
+            #self.stop_training_btn.setText(QCoreApplication.translate("MainPages", u"Stop Training", None))
+
+
+
+
+        elif self.language == "de":
+            self.label.setText(QCoreApplication.translate("MainPages", u"Willkommen bei AI Cell Detection", None))
+            #self.import_status_label.setText(QCoreApplication.translate("MainPages", u"Importstatus", None))
+
+            self.trial_selection_label_results.setText(QCoreApplication.translate("MainPages", u"W\u00e4hlen Sie einen Versuch aus, um die Ergebnisse anzuzeigen", None))
+            self.export_results_btn.setText(QCoreApplication.translate("MainPages", u"Ergebnisse exportieren", None))
+
+            self.datamanagement_page_label.setText(QCoreApplication.translate("MainPages", u"Datenverwaltung", None))
+            self.trial_selection_label_datamanagement.setText(QCoreApplication.translate("MainPages", u"W\u00e4hlen Sie einen Versuch aus, um ihn zu verwalten", None))
+            self.delete_trial_btn.setText(QCoreApplication.translate("MainPages", u"Versuch l\u00f6schen", None))
+
+            #self.trainer_page_label.setText(QCoreApplication.translate("MainPages", u"Trainerseite", None))
+            #self.trial_selection_label_trainer.setText(QCoreApplication.translate("MainPages", u"W\u00e4hlen Sie einen Versuch aus, um das KI-Modell darauf zu trainieren", None))
+            #self.open_nuclei_annotation_tool_btn.setText(QCoreApplication.translate("MainPages", u"Nuclei-Annotationstool \u00f6ffnen", None))
+            #self.train_model_btn.setText(QCoreApplication.translate("MainPages", u"Modell trainieren", None))
+            #self.stop_training_btn.setText(QCoreApplication.translate("MainPages", u"Training stoppen", None))
+            
+
+
+
+
+
+
+
+
+def convert_str_to_bool(value):
+    if value == "True" or value == "true" or value == True: 
+        return True
+    else:
+        return False

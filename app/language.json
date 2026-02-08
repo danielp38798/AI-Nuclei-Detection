@@ -1,0 +1,43 @@
+{
+    "english":
+    {
+        "welcome_page": "Home",
+        "import_page": "Import",
+        "image_analysis_page": "Image Analysis",
+        "results_page": "Results",
+        "data_management_page": "Data Manager",
+        "ai_trainer_page": "AI Trainer",
+        "info_page": "Info",
+        "start": "Start",
+        "stop": "Stop",
+        "cancel": "Cancel",
+        "import_file": "Import",
+        "analyze": "Analize Images",
+        "export": "Export Results",
+        "file": "File",
+        "edit": "Edit",
+        "language": "English",
+        "preferences": "Settings"
+    },
+
+    "german": 
+    {
+        "welcome_page": "Startseite",
+        "import_page": "Importieren",
+        "image_analysis_page": "Bildanalyse",
+        "results_page": "Ergebnisse",
+        "data_management_page": "Datenmanager",
+        "ai_trainer_page": "KI Trainer",
+        "info_page": "Infoseite",
+        "start": "Starten",
+        "stop": "Stoppen",
+        "cancel": "Abbrechen",
+        "import_file": "Importieren",
+        "analyze": "Bildanalyse",
+        "export": "Ergebnisexport",
+        "file": "Datei",
+        "edit": "Bearbeiten",
+        "language": "Deutsch",
+        "preferences": "Einstellungen"
+    }
+}

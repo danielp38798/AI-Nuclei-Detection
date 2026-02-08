@@ -1,0 +1,1112 @@
+# ///////////////////////////////////////////////////////////////
+#
+# BY: WANDERSON M.PIMENTA
+# PROJECT MADE WITH: Qt Designer and PySide6
+# V: 1.0.0
+#
+# This project can be used freely for all uses, as long as they maintain the
+# respective credits only in the Python scripts, any information in the visual
+# interface (GUI) can be modified without any implication.
+#
+# There are limitations on Qt licenses if you want to use your products
+# commercially, I recommend reading them on the official website:
+# https://doc.qt.io/qtforpython/licenses.html
+#
+# ///////////////////////////////////////////////////////////////
+
+# IMPORT QT CORE
+# ///////////////////////////////////////////////////////////////
+from qt_core import *
+import json 
+import os
+import shutil
+from datetime import datetime as dt
+from gui.widgets.py_push_button.py_push_button import PyPushButton
+from gui.widgets.py_icon_button.py_icon_button import PyIconButton
+from gui.widgets.py_line_edit.py_line_edit import PyLineEdit
+from gui.widgets.py_toggle.py_toggle import PyToggle
+from gui.core.functions import Functions
+
+from gui.core.functions import OpenFileThread
+
+# IMPORT THEME COLORS
+# ///////////////////////////////////////////////////////////////
+from gui.core.json_themes import Themes
+
+# Import Settings
+# ///////////////////////////////////////////////////////////////
+from gui.core.json_settings import Settings
+import sys
+import os
+
+def convert_str_to_bool(value: str) -> bool:
+    """
+    Convert a string representation of a boolean to a boolean value.
+
+    Args:
+        value (str): The string representation of the boolean value. 
+                     It can be "True", "true", or True for True, 
+                     and any other value for False.
+
+    Returns:
+        bool: The boolean value corresponding to the input string.
+    """
+    if value == "True" or value == "true" or value == True:
+        return True
+    else:
+        return False
+    
+def get_base_path() -> str:
+    """
+    Get the base path of the application.
+
+    If the application is run as a bundled executable, the PyInstaller
+    bootloader sets a sys._MEIPASS attribute to the path of the temp folder it
+    extracts its bundled files to. Otherwise, it uses the directory of the script being run.
+
+    Returns:
+        str: The base path of the application.
+    """
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    else:
+        return os.getcwd()
+
+class Ui_LeftColumn(object):
+    def setupUi(self, LeftColumn: QWidget) -> None:
+        """
+        Set up the UI for the left column.
+
+        Args:
+            LeftColumn (QWidget): The left column widget.
+        """
+        if not LeftColumn.objectName():
+            LeftColumn.setObjectName(u"LeftColumn")
+        LeftColumn.resize(240, 600)
+        font = QFont()
+        font.setPointSize(16)
+
+        self.settings_file_path = os.path.join(get_base_path(), "application_resources", "settings", "settings.json")
+        self.base_path = get_base_path()  
+
+        self.themes = Themes().items
+        self.settings = Settings().items
+        self.main_pages_layout = QVBoxLayout(LeftColumn)
+        self.main_pages_layout.setSpacing(0)
+        self.main_pages_layout.setObjectName(u"main_pages_layout")
+        self.main_pages_layout.setContentsMargins(5, 5, 5, 5)
+        self.menus = QStackedWidget(LeftColumn)
+        self.menus.setObjectName(u"menus")
+        
+        self.settings_menu_left = QWidget()
+        self.settings_menu_left.setObjectName(u"settings")
+
+        self.verticalLayout = QVBoxLayout(self.settings_menu_left)
+        self.verticalLayout.setSpacing(5)
+        self.verticalLayout.setObjectName(u"verticalLayout")
+        self.verticalLayout.setContentsMargins(5, 5, 5, 5)
+        self.verticalLayout.setAlignment(Qt.AlignTop)
+
+        self.menus.addWidget(self.settings_menu_left)
+
+        # setup the settings entries
+        self.setup_settings_menu_left()
+
+        self.info_menu = QWidget()
+        self.info_menu.setObjectName(u"info_menu")
+        self.verticalLayout_2 = QVBoxLayout(self.info_menu)
+        self.verticalLayout_2.setSpacing(5)
+        self.verticalLayout_2.setObjectName(u"verticalLayout_2")
+        self.verticalLayout_2.setContentsMargins(5, 5, 5, 5)
+        self.btn_4_widget = QWidget(self.info_menu)
+        self.btn_4_widget.setObjectName(u"btn_4_widget")
+        self.btn_4_widget.setMinimumSize(QSize(0, 40))
+        self.btn_4_widget.setMaximumSize(QSize(16777215, 40))
+        self.btn_4_layout = QVBoxLayout(self.btn_4_widget)
+        self.btn_4_layout.setSpacing(0)
+        self.btn_4_layout.setObjectName(u"btn_4_layout")
+        self.btn_4_layout.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout_2.addWidget(self.btn_4_widget)
+        self.label_2 = QLabel(self.info_menu)
+        self.label_2.setObjectName(u"label_2")
+        self.label_2.setFont(font)
+        self.label_2.setStyleSheet(u"font-size: 16pt")
+        self.label_2.setAlignment(Qt.AlignCenter)
+        self.verticalLayout_2.addWidget(self.label_2)
+        self.label_3 = QLabel(self.info_menu)
+        self.label_3.setObjectName(u"label_3")
+        font1 = QFont()
+        font1.setPointSize(9)
+        self.label_3.setFont(font1)
+        self.label_3.setStyleSheet(u"font-size: 9pt")
+        self.label_3.setAlignment(Qt.AlignCenter)
+        self.label_3.setWordWrap(True)
+        self.verticalLayout_2.addWidget(self.label_3)
+
+        self.info_text = QLabel(self.info_menu)
+        self.info_text.setGeometry(QRect(0, 0, 240, 600))
+        self.info_text.setObjectName(u"info_text")
+        self.info_text.setAlignment(Qt.AlignCenter)
+        self.info_text.setFont(font)
+        self.info_text.setStyleSheet("font-size: 10pt")
+        self.info_text.setAlignment(Qt.AlignCenter)
+
+        # add the label to open the manual
+        self.manual_label = QLabel(self.info_menu)
+        self.manual_label.setObjectName(u"manual_label")
+        self.manual_label.setText("Open Manual")
+        self.manual_label.setFont(font1)
+        self.manual_label.setStyleSheet("font-weight: bold; font-size: 9pt")
+        self.manual_label.setAlignment(Qt.AlignCenter)
+
+
+        # add a button to open the manual in english
+        self.open_manual_eng_button = PyPushButton(
+            parent=self.info_menu,
+            text="Open Manual (ENG)",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        self.icon_open_manual_eng = QIcon(Functions.set_svg_icon("eng_language.svg"))
+        self.open_manual_eng_button.setGeometry(QRect(0, 0, 200, 40))
+        self.open_manual_eng_button.setIcon(self.icon_open_manual_eng)
+        self.open_manual_eng_button.setIconSize(QSize(30, 30))
+        self.open_manual_eng_button.clicked.connect(self.open_manual_eng)
+
+        # add the button to open the manual in german
+        button_text = "Open Manual (DE)"
+        self.open_manual_ger_button = PyPushButton(
+            parent=self.info_menu,
+            text=button_text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        self.icon_open_manual_ger = QIcon(Functions.set_svg_icon("de_language.svg"))
+        self.open_manual_ger_button.setGeometry(QRect(0, 0, 200, 40))
+        self.open_manual_ger_button.setIcon(self.icon_open_manual_ger)
+        self.open_manual_ger_button.setIconSize(QSize(30, 30))
+        self.open_manual_ger_button.clicked.connect(self.open_manual_ger)
+     
+        self.info_menu_layout = QVBoxLayout()
+        self.info_menu_layout.addWidget(self.info_text)
+        self.info_menu_layout.addSpacing(10)
+        self.info_menu_layout.addWidget(self.manual_label)
+        self.info_menu_layout.addSpacing(10)
+        self.info_menu_layout.addWidget(self.open_manual_eng_button)
+        self.info_menu_layout.addSpacing(10)
+        self.info_menu_layout.addWidget(self.open_manual_ger_button)
+        self.verticalLayout_2.addLayout(self.info_menu_layout)
+        self.verticalLayout_2.setAlignment(Qt.AlignTop)
+        
+        self.menus.addWidget(self.info_menu)
+        self.main_pages_layout.addWidget(self.menus)
+        self.menus.setCurrentIndex(0)
+        QMetaObject.connectSlotsByName(LeftColumn)
+
+        self.retranslateUi(LeftColumn)
+
+    def open_manual_eng(self) -> None:
+        """
+        Open the English manual PDF.
+        """
+        pdf_path = os.path.join(self.base_path, "application_resources", "docs", "Manual_AI_Nuclei_Detection_eng.pdf")
+        open_manual_eng = OpenFileThread(parent=self.info_menu, open_file_function=os.startfile(pdf_path))
+        open_manual_eng.start()
+
+    def open_manual_ger(self) -> None:
+        """
+        Open the German manual PDF.
+        """
+        pdf_path = os.path.join(self.base_path, "application_resources", "docs",  "Manual_AI_Nuclei_Detection_de.pdf")
+        open_manual_ger = OpenFileThread(parent=self.info_menu, open_file_function=os.startfile(pdf_path))
+        open_manual_ger.start()
+        
+        
+    def setup_settings_menu_left(self) -> None:
+        """
+        Construct the settings menu entries.
+
+        This method sets up the various widgets and layouts for the settings menu
+        on the left side of the UI. It includes labels, combo boxes, spin boxes,
+        toggles, and buttons for configuring the application settings.
+        """
+        if not os.path.exists(self.settings_file_path):
+            self.load_default_settings_file()
+            self.make_settings_file()
+        else:
+            self.read_settings_file()
+              
+        # add a "general settings" label
+        if self.settings["language"] == "de":
+            self.general_settings_label = QLabel("Allgemeine Einstellungen")
+        else:
+            self.general_settings_label = QLabel("General Settings")
+        self.general_settings_label.setStyleSheet("font-weight: bold;")
+
+        # add a combo box and label to change the language
+        self.language_layout = QHBoxLayout()
+        if self.settings["language"] == "de":
+            self.language_label = QLabel("Sprache")
+        else:
+            self.language_label = QLabel("Language")
+        self.language_combo_box = QComboBox()
+        self.language_combo_box.addItem("English")
+        self.language_combo_box.addItem("Deutsch")
+        self.language_layout.addWidget(self.language_label)
+        self.language_layout.addWidget(self.language_combo_box)
+        self.language_combo_box.setCurrentIndex(0 if self.settings["language"] == "eng" else 1)
+
+        # add a spinbox to set the detection accuracy
+        if self.settings["language"] == "de":
+            self.detection_accuracy_label = QLabel("Detektionsgenauigkeit")
+        else:
+            self.detection_accuracy_label = QLabel("Detection Accuracy")
+        #self.detection_accuracy_spin = QSpinBox()
+        #self.detection_accuracy_spin.setValue(self.detection_accuracy)
+        #self.detection_accuracy_spin.setMinimum(1)
+        #self.detection_accuracy_spin.setMaximum(10)
+        #self.detection_accuracy_spin.setSingleStep(1)
+        
+        # detection accuracy value can be between 0 and 1 with 0.1 steps
+        self.detection_accuracy_spin = QDoubleSpinBox()
+        self.detection_accuracy_spin.setRange(0, 1)  # Set the range from 0 to 1
+        self.detection_accuracy_spin.setSingleStep(0.01)  # Set the step to 0.1
+        self.detection_accuracy_spin.setDecimals(2)  # Set the number of decimal places to 1
+
+
+        self.detection_accuracy_layout = QHBoxLayout()
+        self.detection_accuracy_layout.addWidget(self.detection_accuracy_label)
+        self.detection_accuracy_layout.addWidget(self.detection_accuracy_spin)
+
+        # add a drop down menu to select the model
+        self.model_selection_layout = QHBoxLayout()
+        if self.settings["language"] == "de":
+            self.model_selection_label = QLabel("KI-Modell")
+        else:
+            self.model_selection_label = QLabel("AI Model")
+        self.model_selection_combo_box = QComboBox()
+
+
+        # Mask R-CNNs
+        #self.model_selection_combo_box.addItem("Mask R-CNN (ResNet 50 + DC5)")
+        self.model_selection_combo_box.addItem("Accurate Model (R_101_DC5)")
+        self.model_selection_combo_box.addItem("Small Model (R_50_C4)")
+
+        # YOLOv11
+        #self.model_selection_combo_box.addItem("YOLOv11")
+
+        self.model_selection_layout.addWidget(self.model_selection_label)
+        self.model_selection_layout.addWidget(self.model_selection_combo_box)
+        
+        model_selection = self.model_selection
+
+        if model_selection == "Accurate Model (R_101_DC5)":
+            self.model_selection_combo_box.setCurrentIndex(0)
+        elif model_selection == "Small Model (R_50_C4)":
+            self.model_selection_combo_box.setCurrentIndex(1)
+       
+        # define the import settings 
+        if self.settings["language"] == "de":   
+            self.import_settings_label = QLabel("Import Einstellungen")
+        else:
+            self.import_settings_label = QLabel("Import Settings")
+        self.import_settings_label.setStyleSheet("font-weight: bold;")
+
+        # define a toggle to filter images
+        self.filter_images_layout = QHBoxLayout()
+        self.filter_images_check = PyToggle()
+        #self.filter_images_label = QLabel("Filter Images")
+        if self.settings["language"] == "de":
+            self.filter_images_label = QLabel("Bilder filtern")
+        else:
+            self.filter_images_label = QLabel("Filter Images")
+        self.filter_images_layout.addWidget(self.filter_images_check)
+        self.filter_images_layout.addSpacing(5)
+        self.filter_images_layout.addWidget(self.filter_images_label)
+        self.filter_images_check.setChecked(self.filter_images)
+
+        self.filter_images_check.clicked.connect(self.check_if_filter_images_is_checked)
+
+        # add a PyLineEdit to enter the name filter
+        #self.name_filter_label = QLabel("Name Filter")
+        if self.settings["language"] == "de":
+            self.name_filter_label = QLabel("Bilder nach Name filtern")
+        else:
+            self.name_filter_label = QLabel("Filter images by name")
+        self.name_filter_entry = PyLineEdit(text=self.name_filter)
+        self.name_filter_entry.setMaximumWidth(500)
+        self.name_filter_entry.setMinimumWidth(200)
+
+        # filter images layout
+        filter_images_layout = QVBoxLayout()
+        filter_images_layout.addWidget(self.import_settings_label)
+        filter_images_layout.addLayout(self.filter_images_layout)
+        # orient the name filter to the right
+        filter_images_layout_right = QHBoxLayout()
+        filter_images_layout_right.addWidget(self.name_filter_label)
+        filter_images_layout_right.addWidget(self.name_filter_entry)
+        filter_images_layout.addLayout(filter_images_layout_right)
+
+        
+        self.convert_img_to_8bit_layout = QHBoxLayout()
+        self.convert_img_to_8bit_check = PyToggle()
+
+        if self.settings["language"] == "de":
+            self.convert_img_to_8bit_check_text = QLabel("Bilder in 8bit konvertieren")
+        else:
+            self.convert_img_to_8bit_check_text = QLabel("Convert Image to 8bit")
+        self.convert_img_to_8bit_layout.addWidget(self.convert_img_to_8bit_check)
+        self.convert_img_to_8bit_layout.addWidget(self.convert_img_to_8bit_check_text)
+        self.convert_img_to_8bit_check.setChecked(self.convert_img_to_8bit)
+
+
+        self.crop_images_layout = QHBoxLayout()
+        self.crop_images_check = PyToggle()
+        #self.crop_images_label = QLabel("Crop Images")
+        if self.settings["language"] == "de":
+            self.crop_images_label = QLabel("Bilder zuschneiden")
+        else:
+            self.crop_images_label = QLabel("Crop Images")
+        self.crop_images_layout.addWidget(self.crop_images_check)
+        self.crop_images_layout.addWidget(self.crop_images_label)
+        self.crop_images_check.setChecked(self.crop_images)
+        
+         # define spinboxes for cropping
+        self.set_min = 0.0
+        self.set_max = 0.25
+        self.crop_left = float(self.crop_left) # values are stored in settings.json as percentage
+        self.crop_right = float(self.crop_right)
+        self.crop_top = float(self.crop_top)
+        self.crop_bottom = float(self.crop_bottom)
+
+   
+        #self.crop_image_left_label = QLabel("Crop Left [%]")
+        if self.settings["language"] == "de":
+            self.crop_image_left_label = QLabel("Links [%]")
+        else:
+            self.crop_image_left_label = QLabel("Crop Left [%]")
+        self.crop_left_spin = QDoubleSpinBox()
+        self.crop_left_spin.setValue(self.crop_left*100)
+        self.crop_left_spin.setMinimum(float(100*self.set_min))
+        self.crop_left_spin.setMaximum(float(100*self.set_max))
+        self.crop_left_spin.setSingleStep(float(0.5))
+        self.crop_left_spin.setDecimals(1)
+
+        #self.crop_image_right_label = QLabel("Crop Right [%]")
+        if self.settings["language"] == "de":
+            self.crop_image_right_label = QLabel("Rechts [%]")
+        else:
+            self.crop_image_right_label = QLabel("Crop Right [%]")
+        self.crop_right_spin = QDoubleSpinBox()
+        self.crop_right_spin.setValue(self.crop_right*100)
+        self.crop_right_spin.setMinimum(float(100*self.set_min))
+        self.crop_right_spin.setMaximum(float(100*self.set_max))
+        self.crop_right_spin.setSingleStep(float(0.5))
+        self.crop_right_spin.setDecimals(1)
+
+        #self.crop_image_top_label = QLabel("Crop Top [%]")
+        if self.settings["language"] == "de":
+            self.crop_image_top_label = QLabel("Oben [%]")
+        else:
+            self.crop_image_top_label = QLabel("Crop Top [%]")
+        self.crop_top_spin = QDoubleSpinBox()
+        #print(f"setup settings crop top: {self.crop_top}")
+        self.crop_top_spin.setValue(self.crop_top*100)
+        self.crop_top_spin.setMinimum(float(100*self.set_min))
+        self.crop_top_spin.setMaximum(float(100*self.set_max))
+        self.crop_top_spin.setSingleStep(float(0.5))
+        self.crop_top_spin.setDecimals(1)
+
+        #self.crop_image_bottom_label = QLabel("Crop Bottom [%]")
+        if self.settings["language"] == "de":
+            self.crop_image_bottom_label = QLabel("Unten [%]")
+        else:
+            self.crop_image_bottom_label = QLabel("Crop Bottom [%]")
+        self.crop_bottom_spin = QDoubleSpinBox()
+        #print(f"setup settings crop bottom: {self.crop_bottom}")
+        self.crop_bottom_spin.setValue(self.crop_bottom*100) # used default value from settings.json
+        self.crop_bottom_spin.setMinimum(float(100*self.set_min))
+        self.crop_bottom_spin.setMaximum(float(100*self.set_max))
+        self.crop_bottom_spin.setSingleStep(float(0.5))
+        self.crop_bottom_spin.setDecimals(1)
+
+        # define the spinbox layout
+        spinbox_layout = QVBoxLayout()
+        # orient the spinboxes to the right
+        spinbox_layout_right = QHBoxLayout()
+        spinbox_layout_right.addWidget(self.crop_image_left_label)
+        spinbox_layout_right.addWidget(self.crop_left_spin)
+        spinbox_layout.addLayout(spinbox_layout_right)
+
+        # orient the spinboxes to the right
+        spinbox_layout_right = QHBoxLayout()
+        spinbox_layout_right.addWidget(self.crop_image_right_label)
+        spinbox_layout_right.addWidget(self.crop_right_spin)
+        spinbox_layout.addLayout(spinbox_layout_right)
+
+
+        # orient the spinboxes to the right
+        spinbox_layout_right = QHBoxLayout()
+        spinbox_layout_right.addWidget(self.crop_image_top_label)
+        spinbox_layout_right.addWidget(self.crop_top_spin)
+        spinbox_layout.addLayout(spinbox_layout_right)
+
+        # orient the spinboxes to the right
+        spinbox_layout_right = QHBoxLayout()
+        spinbox_layout_right.addWidget(self.crop_image_bottom_label)
+        spinbox_layout_right.addWidget(self.crop_bottom_spin)
+        spinbox_layout.addLayout(spinbox_layout_right)
+
+
+        # connect the check box to the spinboxes
+        self.crop_images_check.clicked.connect(self.check_if_crop_images_is_checked)
+
+        
+
+        # define the saving settings
+        #self.saving_check_box_label = QLabel("Select Saving Settings")
+        if self.settings["language"] == "de":
+            self.saving_check_box_label = QLabel("Speichereinstellungen")
+        else:
+            self.saving_check_box_label = QLabel("Saving Settings")
+        self.saving_check_box_label.setStyleSheet("font-weight: bold;")
+
+        # define check box for saving csv file
+        self.save_csv_layout = QHBoxLayout()
+        self.save_csv_check = PyToggle()
+        #self.save_csv_check_text = QLabel("Save CSV File")
+        if self.settings["language"] == "de":
+            self.save_csv_check_text = QLabel("CSV-Datei speichern")
+        else:
+            self.save_csv_check_text = QLabel("Save CSV File")
+        self.save_csv_layout.addWidget(self.save_csv_check)
+        self.save_csv_layout.addWidget(self.save_csv_check_text)
+
+
+        # define check box for saving excel file
+        self.save_excel_layout = QHBoxLayout()
+        self.save_excel_check = PyToggle()
+        #self.save_excel_check_text = QLabel("Save EXCEL File")
+        if self.settings["language"] == "de":
+            self.save_excel_check_text = QLabel("Excel-Datei speichern")
+        else:
+            self.save_excel_check_text = QLabel("Save EXCEL File")
+        self.save_excel_layout.addWidget(self.save_excel_check)
+        self.save_excel_layout.addWidget(self.save_excel_check_text)
+
+
+
+        # define check for saving predictions as coco file
+        self.save_coco_layout = QHBoxLayout()
+        self.save_coco_check = PyToggle()
+        if self.settings["language"] == "de":
+            self.save_coco_check_text = QLabel("KI-Detektionen als COCO-Datei speichern")
+        else:
+            self.save_coco_check_text = QLabel("Save AI Detections as COCO File")
+        self.save_coco_layout.addWidget(self.save_coco_check)
+        self.save_coco_layout.addWidget(self.save_coco_check_text)
+
+        self.processing_setting_label = QLabel("Processing Settings")
+        self.processing_setting_label.setStyleSheet("font-weight: bold;")
+        
+
+        # define entry fields
+        if self.settings["language"] == "de":
+            self.unit_label = QLabel("Einheit für die Verarbeitung auswählen")
+        else:
+            self.unit_label = QLabel("Select Unit for Processing")
+        
+        self.unit_radio_button_1 = QRadioButton("mm")
+        self.unit_radio_button_2 = QRadioButton("µm")
+
+        #self.image_size_label = QLabel("Input Image Width") # calc pix length from this
+        if self.settings["language"] == "de":
+            self.image_size_label = QLabel("Eingabebildbreite in mm")
+        else:
+            self.image_size_label = QLabel("Input Image Width in mm ")
+        self.entry_image_size = PyLineEdit(text=str(self.image_size))
+        self.entry_image_size.setMaximumWidth(500)
+        self.entry_image_size.setMinimumWidth(200)
+
+        # define the buttons
+        if self.settings["language"] == "de":
+            text = "Speichern"
+        else:
+            text = "Save"
+        self.save_button = PyPushButton(
+            parent=self.settings_menu_left,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        self.save_button.clicked.connect(self.write_settings_file)
+        self.save_button.setMaximumWidth(500)
+        self.save_button.setMinimumWidth(200)
+
+        #self.export_settings_button = QPushButton("Export Settings")
+        if self.settings["language"] == "de":
+            text = "Einstellungen exportieren"
+        else:
+            text = "Export Settings"
+        self.export_settings_button = PyPushButton(
+            parent=self.settings_menu_left,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        self.export_settings_button.clicked.connect(self.export_settings_file)
+        self.export_settings_button.setMaximumWidth(500)
+        self.export_settings_button.setMinimumWidth(200)
+
+        #self.import_settings_button = QPushButton("Import Settings")
+        if self.settings["language"] == "de":
+            text = "Einstellungen importieren"
+        else:
+            text = "Import Settings"
+
+        self.import_settings_button = PyPushButton(
+            parent=self.settings_menu_left,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        self.import_settings_button.clicked.connect(self.import_settings_file)
+        self.import_settings_button.setMaximumWidth(500)
+        self.import_settings_button.setMinimumWidth(200)
+
+        # button to reset to default settings
+        if self.settings["language"] == "de":
+            text = "Standardeinstellungen zurücksetzen"
+        else:
+            text = "Reset Default Settings"
+        self.reset_button = PyPushButton(
+            parent=self.settings_menu_left,
+            text=text,
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_three"],
+            bg_color_pressed=self.themes["app_color"]["dark_four"]
+        )
+        #self.reset_button = QPushButton("Reset Default Settings")
+        self.reset_button.clicked.connect(self.reset_default_settings)
+        self.reset_button.setMaximumWidth(500)
+        self.reset_button.setMinimumWidth(200)
+
+        import_settings_layout = QVBoxLayout()
+        import_settings_layout.addLayout(filter_images_layout)
+        import_settings_layout.addLayout(self.convert_img_to_8bit_layout)
+        import_settings_layout.addLayout(self.crop_images_layout)
+
+
+        # define the check box layout
+        saving_check_box_layout = QVBoxLayout()
+        saving_check_box_layout.addLayout(self.save_csv_layout)
+        saving_check_box_layout.addLayout(self.save_excel_layout)
+        saving_check_box_layout.addLayout(self.save_coco_layout)
+        #saving_check_box_layout.addLayout(self.save_report_layout)
+        #saving_check_box_layout.addLayout(self.save_plots_layout)
+        
+
+        processing_setting_layout = QVBoxLayout()
+
+        #orient the processing_setting fields to the right
+        processing_setting_layout_right = QHBoxLayout()
+        processing_setting_layout_right.addWidget(self.image_size_label)
+        processing_setting_layout_right.addWidget(self.entry_image_size)
+        processing_setting_layout.addLayout(processing_setting_layout_right)
+
+        # orient the processing_setting fields to the right
+        processing_setting_layout_right = QHBoxLayout()
+        processing_setting_layout_right.addWidget(self.unit_label)
+        processing_setting_layout_right.addWidget(self.unit_radio_button_1)
+        processing_setting_layout_right.addWidget(self.unit_radio_button_2)
+        processing_setting_layout.addLayout(processing_setting_layout_right)
+
+    
+        if self.unit == "mm":
+            self.unit_radio_button_1.setChecked(True)
+            self.unit_radio_button_2.setChecked(False)
+        elif self.unit == "um" or self.unit == "µm":
+            self.unit_radio_button_1.setChecked(False)
+            self.unit_radio_button_2.setChecked(True) 
+        else:
+            self.unit_radio_button_1.setChecked(True)
+            self.unit_radio_button_2.setChecked(False)
+        
+        
+        # define the button layout
+        button_layout = QVBoxLayout()
+        button_layout.addWidget(self.save_button)
+        button_layout.addWidget(self.reset_button)
+        button_layout.addWidget(self.export_settings_button)
+        button_layout.addWidget(self.import_settings_button)
+  
+
+        # pack it all together
+        self.verticalLayout.addWidget(self.general_settings_label)
+        self.verticalLayout.addLayout(self.language_layout)
+        self.verticalLayout.addLayout(self.detection_accuracy_layout)
+        self.verticalLayout.addLayout(self.model_selection_layout)
+
+        self.verticalLayout.addSpacing(10)
+
+        self.verticalLayout.addWidget(self.import_settings_label)
+        self.verticalLayout.addLayout(import_settings_layout)
+        self.verticalLayout.addLayout(spinbox_layout)
+
+        self.verticalLayout.addSpacing(10)
+
+        self.verticalLayout.addWidget(self.saving_check_box_label)
+        self.verticalLayout.addLayout(saving_check_box_layout)
+
+        self.verticalLayout.addSpacing(10)
+
+        self.verticalLayout.addWidget(self.processing_setting_label)
+        self.verticalLayout.addLayout(processing_setting_layout)
+ 
+        self.verticalLayout.addSpacing(10)
+        
+        self.verticalLayout.addLayout(button_layout)
+
+        # align the layout to the top of settings_menu_left
+        self.verticalLayout.setAlignment(Qt.AlignTop)
+        self.settings_menu_left.setLayout(self.verticalLayout)
+
+
+        if not os.path.exists(self.settings_file_path):
+            self.load_default_settings_file()
+            self.make_settings_file()
+        else:
+            self.read_settings_file()
+            self.update_window_entries()
+            
+
+    def check_if_crop_images_is_checked(self) -> None:
+        """
+        Enable or disable the crop spin boxes based on the crop images toggle.
+
+        This method checks the state of the crop images toggle and enables or
+        disables the spin boxes for cropping images accordingly.
+        """
+        if self.crop_images_check.isChecked():
+            self.crop_left_spin.setEnabled(True)
+            self.crop_right_spin.setEnabled(True)
+            self.crop_top_spin.setEnabled(True)
+            self.crop_bottom_spin.setEnabled(True)
+        else:
+            self.crop_left_spin.setEnabled(False)
+            self.crop_right_spin.setEnabled(False)
+            self.crop_top_spin.setEnabled(False)
+            self.crop_bottom_spin.setEnabled(False)
+    
+    def check_if_convert_img_to_8bit_is_checked(self) -> bool:
+        """
+        Check if the convert image to 8-bit toggle is checked.
+
+        Returns:
+            bool: True if the convert image to 8-bit toggle is checked, False otherwise.
+        """
+        return self.convert_img_to_8bit_check.isChecked()
+    
+    def check_if_filter_images_is_checked(self) -> None:
+        """
+        Enable or disable the name filter entry based on the filter images toggle.
+
+        This method checks the state of the filter images toggle and enables or
+        disables the name filter entry accordingly.
+        """
+        if self.filter_images_check.isChecked():
+            self.name_filter_entry.setEnabled(True)
+        else:
+            self.name_filter_entry.setEnabled(False)
+    
+    
+    def load_default_settings_file(self) -> None:
+        """
+        Load the default settings from the default settings dictionary.
+
+        This method initializes the settings attributes with the default values
+        defined in the default settings dictionary. It sets the language, detection
+        accuracy, model selection, filter images, name filter, save options, image
+        size, unit, convert image to 8-bit, and crop image settings to their default
+        values.
+        """
+        default_settings_file_path = os.path.join(get_base_path(), "application_resources", "settings", "default_settings.json")
+        if not os.path.exists(default_settings_file_path):
+            print("Default settings file not found.")
+            return
+        
+        # load the default settings from the default settings file
+        with open(default_settings_file_path, "r", encoding='utf8') as default_settings_file:
+            default_settings = json.load(default_settings_file)
+            default_settings_file.close()
+        
+        self.default_settings = default_settings
+        self.default_language = str(self.default_settings["language"])
+        self.default_detection_accuracy = float(self.default_settings["processing_settings"]["detection_accuracy"])
+        self.default_model_selection = str(self.default_settings["processing_settings"]["model_selection"])
+        self.default_filter_images = convert_str_to_bool(self.default_settings["processing_settings"]["filter_images"])
+        self.default_name_filter = str(self.default_settings["processing_settings"]["name_filter"])
+        self.default_save_csv = convert_str_to_bool(self.default_settings["processing_settings"]["save_csv"])
+        self.default_save_excel = convert_str_to_bool(self.default_settings["processing_settings"]["save_excel"])
+        self.default_save_coco = convert_str_to_bool(self.default_settings["processing_settings"]["save_coco"])
+        #self.default_save_report = convert_str_to_bool(self.default_settings["processing_settings"]["save_report"])
+        #self.default_save_plots = convert_str_to_bool(self.default_settings["processing_settings"]["save_plots"])
+        self.default_image_size = float(self.default_settings["processing_settings"]["image_size"])
+        self.default_unit = str(self.default_settings["processing_settings"]["unit"])
+        self.default_convert_img_to_8bit = convert_str_to_bool(self.default_settings["processing_settings"]["convert_img_to_8bit"])
+        self.default_crop_images = convert_str_to_bool(self.default_settings["processing_settings"]["crop_images"])
+        self.default_crop_left = float(self.default_settings["processing_settings"]["crop_left"])
+        self.default_crop_right = float(self.default_settings["processing_settings"]["crop_right"])
+        self.default_crop_top = float(self.default_settings["processing_settings"]["crop_top"])
+        self.default_crop_bottom = float(self.default_settings["processing_settings"]["crop_bottom"])
+        
+    def make_settings_file(self) -> bool:
+        """
+        Create a settings file with default settings.
+
+        This method creates a settings file named 'settings.json' in the applications_ressources folder
+        with the default settings defined in the default settings dictionary.
+
+        Returns:
+            bool: True if the settings file is created successfully.
+        """
+        self.settings_file_path = os.path.join(get_base_path(), "application_resources", "settings", "settings.json")
+        with open(self.settings_file_path, "w", encoding='utf8') as processing_settings:
+            json.dump(self.default_settings, processing_settings, ensure_ascii=True, indent=4)
+            processing_settings.close()
+        return True
+    
+    def write_settings_file(self) -> bool:
+        """
+        Write the current settings to the settings file.
+
+        This method collects the current settings from the UI elements, constructs
+        a dictionary with these settings, and writes them to the settings file in
+        JSON format. It also updates the window entries and displays a message box
+        indicating whether the settings were saved successfully or not.
+
+        Returns:
+            bool: True if the settings were saved successfully, False otherwise.
+        """
+        if self.unit_radio_button_1.isChecked():
+            unit = "mm"
+        else: 
+            unit = "um"
+        if self.entry_image_size.text().replace('.','',1).isdigit():
+            self.image_size = float(self.entry_image_size.text())
+            settings_dict = {
+                            "detection_accuracy": float(self.detection_accuracy_spin.value()),
+                            "model_selection": str(self.model_selection_combo_box.currentText()),
+                            "filter_images": str(self.filter_images_check.isChecked()),
+                            "name_filter": str(self.name_filter_entry.text()),
+                            "save_csv": str(self.save_csv_check.isChecked()), 
+                            "save_excel":str(self.save_excel_check.isChecked()),
+                            #"save_report": str(self.save_report_check.isChecked()),
+                            #"save_plots": str(self.save_plots_check.isChecked()),
+                            "save_coco": str(self.save_coco_check.isChecked()),
+                            "image_size": float(self.image_size), 
+                            "unit": str(unit), 
+                            "convert_img_to_8bit" : str(self.convert_img_to_8bit_check.isChecked()),
+                            "crop_images" : str(self.crop_images_check.isChecked()),
+                            "crop_left": self.crop_left_spin.value(),
+                            "crop_right": self.crop_right_spin.value(),
+                            "crop_top": self.crop_top_spin.value(),
+                            "crop_bottom": self.crop_bottom_spin.value()
+                            }
+            current_settings = self.processing_settings_dict
+            current_settings["processing_settings"] = settings_dict
+            current_settings["language"] = ["eng" if self.language_combo_box.currentText() == "English" else "de"][0]
+            self.language = current_settings["language"]
+            with open(self.settings_file_path, "w", encoding ='utf8') as processing_settings:
+                json.dump(current_settings, processing_settings, ensure_ascii=True, indent=4)
+                processing_settings.close()
+
+            self.update_window_entries()
+            if self.settings["language"] == "eng":
+                QMessageBox.information(self.settings_menu_left, "Saving Settings", "Settings saved successfully!")
+            elif self.settings["language"] == "de":
+                QMessageBox.information(self.settings_menu_left, "Einstellungen speichern", "Einstellungen wurden erfolgreich gespeichert!")
+            return True
+        else:
+            if self.settings["language"] == "eng":
+                QMessageBox.warning(self.settings_menu_left, "Invalid Entry", 
+                                f"Not saved due to invalid entry. Only numerical entries are accepted. Changed to last value set: {self.image_size}")
+            elif self.settings["language"] == "de":
+                QMessageBox.warning(self.settings_menu_left, "Ungültiger Eintrag", 
+                                f"Nicht gespeichert aufgrund ungültiger Eingabe. Nur numerische Eingaben sind zulässig. Geändert auf letzten Wert: {self.image_size}")
+            self.update_window_entries()
+            return False
+        
+    def read_settings_file(self) -> None:
+        """
+        Load settings from a JSON file.
+
+        This method reads the settings from a JSON file located in the current
+        working directory and updates the instance variables with the loaded
+        settings. It sets the language, detection accuracy, model selection,
+        filter images, name filter, save options, image size, unit, convert image
+        to 8-bit, and crop image settings.
+
+        Args:
+            self: The instance of the class.
+
+        Returns:
+            None
+        """
+        settings_file_path = os.path.join(get_base_path(), "application_resources", "settings","settings.json")
+        with open (settings_file_path, "r") as sf:
+            self.processing_settings_dict = json.load(sf) 
+        self.language = str(self.processing_settings_dict["language"])  
+        self.detection_accuracy = float(self.processing_settings_dict["processing_settings"]["detection_accuracy"])
+        self.model_selection = str(self.processing_settings_dict["processing_settings"]["model_selection"])
+        self.filter_images = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["filter_images"])
+        self.name_filter = str(self.processing_settings_dict["processing_settings"]["name_filter"])
+        self.save_csv = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["save_csv"])
+        self.save_excel = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["save_excel"])
+        #self.save_report = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["save_report"])
+        #self.save_plots = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["save_plots"])
+        self.save_coco = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["save_coco"])
+        self.convert_img_to_8bit = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["convert_img_to_8bit"])
+        self.crop_images = convert_str_to_bool(self.processing_settings_dict["processing_settings"]["crop_images"])
+        self.crop_left = float(self.processing_settings_dict["processing_settings"]["crop_left"])
+        self.crop_right = float(self.processing_settings_dict["processing_settings"]["crop_right"])
+        self.crop_top = float(self.processing_settings_dict["processing_settings"]["crop_top"])
+        self.crop_bottom = float(self.processing_settings_dict["processing_settings"]["crop_bottom"])
+        self.image_size = float(self.processing_settings_dict["processing_settings"]["image_size"])
+        self.unit = str(self.processing_settings_dict["processing_settings"]["unit"])
+        sf.close()
+        
+    def import_settings_file(self) -> bool:
+        """
+        Import settings from a JSON file.
+
+        This method opens a file dialog to select a JSON file containing settings.
+        It validates the file to ensure it contains the required keys and updates
+        the current settings with the imported settings. If the import is successful,
+        it updates the UI elements with the new settings.
+
+        Returns:
+            bool: True if the settings were imported successfully, False otherwise.
+        """
+        if self.settings["language"] == "eng":
+            title = "Open Settings File"
+        elif self.settings["language"] == "de":
+            title = "Einstellungsdatei öffnen"
+        file_dir = QFileDialog.getOpenFileName(self.settings_menu_left, title, filter="*.json")[0]
+        if file_dir:
+            # check if file is valid
+            with open(file_dir, "r", encoding='utf8') as imported_json:
+                self.imported_settings = json.load(imported_json)
+                imported_json.close()
+            for key in list(self.processing_settings_dict.keys()):  # check if right keys exist in imported file
+                if key not in list(self.imported_settings.keys()):  # imported file does only contain the part of "processing_settings" key
+                    if self.settings["language"] == "eng":
+                        text = "Settings file does not have all required information."
+                        title = "Settings File"
+                    else:
+                        text = "Einstellungsdatei enthält nicht alle erforderlichen Informationen."
+                        title = "Einstellungsdatei"
+                    QMessageBox.critical(self.settings_menu_left, title, text)
+                    return False
+                else:
+                    if type(self.imported_settings[key]) == type(self.processing_settings_dict[key]):
+                        pass
+
+            self.processing_settings_dict = self.imported_settings
+            with open(self.settings_file_path, "w", encoding='utf8') as processing_settings:
+                json.dump(self.processing_settings_dict, processing_settings, ensure_ascii=True, indent=4)
+            processing_settings.close()
+            if self.settings["language"] == "eng":
+                QMessageBox.information(self.settings_menu_left, "Import Settings", "Import of settings file successful!")
+            elif self.settings["language"] == "de":
+                QMessageBox.information(self.settings_menu_left, "Einstellungen importieren", "Import der Einstellungsdatei erfolgreich!")
+            self.update_window_entries()
+            return True
+        else:
+            if self.settings["language"] == "eng":
+                QMessageBox.critical(self.settings_menu_left, "Import Settings", "No Settings file selected!")
+            elif self.settings["language"] == "de":
+                QMessageBox.critical(self.settings_menu_left, "Einstellungen importieren", "Keine Einstellungsdatei ausgewählt!")
+            return False
+        
+    def export_settings_file(self) -> None:
+        """
+        Export the current settings to a JSON file.
+
+        This method opens a file dialog to select a directory for exporting the
+        settings file. It then extracts the current settings from the instance
+        variable, writes them to a new JSON file in the selected directory, and
+        displays a message box indicating whether the export was successful or not.
+
+        Returns:
+            None
+        """
+        export_path = QFileDialog.getExistingDirectory()
+        if export_path:
+            # extract processing setting from self.default_settings
+            settings_dict = self.processing_settings_dict
+            # dump extracted settings to new file
+            with open(os.path.join(export_path, f"Processing_Settings_{dt.today().strftime('%Y_%m_%d_%H_%M')}_.json"), "w", encoding='utf8') as processing_settings:
+                json.dump(settings_dict, processing_settings, ensure_ascii=True, indent=4)
+            # shutil.copy(self.settings_file_path, os.path.join(export_path, f"Processing_Settings_{dt.today().strftime('%Y_%m_%d_%H_%M')}_.json"))
+            if self.settings["language"] == "eng":
+                QMessageBox.information(self.settings_menu_left, "Export File", "The settings file was exported successfully!")
+            elif self.settings["language"] == "de":
+                QMessageBox.information(self.settings_menu_left, "Datei exportieren", "Die Einstellungsdatei wurde erfolgreich exportiert!")
+        else:
+            if self.settings["language"] == "eng":
+                QMessageBox.critical(self.settings_menu_left, "Export File", "No export path selected!")
+            elif self.settings["language"] == "de":
+                QMessageBox.critical(self.settings_menu_left, "Datei exportieren", "Kein Exportpfad ausgewählt!")
+                
+    def update_window_entries(self) -> None:
+        """
+        Update the UI elements with the current settings.
+
+        This method reads the settings from the settings file and updates the
+        corresponding UI elements with the loaded values. It sets the detection
+        accuracy, model selection, save options, image size, unit, convert image
+        to 8-bit, and crop image settings in the UI.
+        """
+        self.read_settings_file()
+        self.detection_accuracy_spin.setValue(self.detection_accuracy)
+        model_selection = self.model_selection
+    
+        if model_selection == "Accurate Model (R_101_DC5)":
+            self.model_selection_combo_box.setCurrentIndex(0)
+        elif model_selection == "Small Model (R_50_C4)":
+            self.model_selection_combo_box.setCurrentIndex(1)
+
+        self.filter_images_check.setChecked(self.filter_images)
+        self.name_filter_entry.setText(self.name_filter)
+
+        self.save_csv_check.setChecked(self.save_csv)
+        self.save_excel_check.setChecked(self.save_excel)
+        #self.save_report_check.setChecked(self.save_report)
+        #self.save_plots_check.setChecked(self.save_plots)
+        self.save_coco_check.setChecked(self.save_coco)
+        self.entry_image_size.setText(str(self.image_size))
+        if self.unit == "mm":
+            self.unit_radio_button_1.setChecked(True)
+            self.unit_radio_button_2.setChecked(False)
+        elif self.unit == "um" or self.unit == "µm":
+            self.unit_radio_button_1.setChecked(False)
+            self.unit_radio_button_2.setChecked(True)
+        self.convert_img_to_8bit_check.setChecked(self.convert_img_to_8bit)
+        self.crop_images_check.setChecked(self.crop_images)
+        self.crop_left_spin.setValue(self.crop_left)
+        self.crop_right_spin.setValue(self.crop_right)
+        self.crop_top_spin.setValue(self.crop_top)
+        self.crop_bottom_spin.setValue(self.crop_bottom)
+        
+    def reset_default_settings(self) -> None:
+        """
+        Reset the settings to their default values.
+
+        This method loads the default settings from the default settings dictionary
+        and updates the UI elements with these default values. It sets the detection
+        accuracy, model selection, filter images, name filter, save options, image
+        size, unit, convert image to 8-bit, and crop image settings to their default
+        values.
+        """
+        self.load_default_settings_file()
+
+        detection_accuracy = self.default_settings["processing_settings"]["detection_accuracy"]
+        model_selection = self.default_settings["processing_settings"]["model_selection"]
+        filter_images = self.default_settings["processing_settings"]["filter_images"]
+        name_filter = self.default_settings["processing_settings"]["name_filter"]
+        save_csv = self.default_settings["processing_settings"]["save_csv"]
+        save_excel = self.default_settings["processing_settings"]["save_excel"]
+        save_coco = self.default_settings["processing_settings"]["save_coco"]
+        image_size = self.default_settings["processing_settings"]["image_size"]
+        unit = self.default_settings["processing_settings"]["unit"]
+        default_convert_img_to_8bit = self.default_settings["processing_settings"]["convert_img_to_8bit"]
+        default_crop_images = self.default_settings["processing_settings"]["crop_images"]
+        default_crop_left = self.default_settings["processing_settings"]["crop_left"]
+        default_crop_right = self.default_settings["processing_settings"]["crop_right"]
+        default_crop_top = self.default_settings["processing_settings"]["crop_top"]
+        default_crop_bottom = self.default_settings["processing_settings"]["crop_bottom"]
+
+        self.detection_accuracy_spin.setValue(detection_accuracy)
+
+        if model_selection == "Accurate Model (R_101_DC5)":
+            self.model_selection_combo_box.setCurrentIndex(0)
+        elif model_selection == "Small Model (R_50_C4)":
+            self.model_selection_combo_box.setCurrentIndex(1)
+
+
+        self.filter_images_check.setChecked(convert_str_to_bool(filter_images))
+        self.name_filter_entry.setText(name_filter)
+
+        self.convert_img_to_8bit_check.setChecked(convert_str_to_bool(default_convert_img_to_8bit))
+        self.crop_images_check.setChecked(convert_str_to_bool(default_crop_images))
+        self.crop_left_spin.setValue(float(default_crop_left))
+        self.crop_right_spin.setValue(float(default_crop_right))
+        self.crop_top_spin.setValue(float(default_crop_top))
+        self.crop_bottom_spin.setValue(float(default_crop_bottom))
+
+        self.save_csv_check.setChecked(convert_str_to_bool(save_csv))
+        self.save_excel_check.setChecked(convert_str_to_bool(save_excel))
+        self.save_coco_check.setChecked(convert_str_to_bool(save_coco))
+        self.entry_image_size.setText(str(image_size))
+        if unit == "mm":
+            self.unit_radio_button_1.setChecked(True)
+            self.unit_radio_button_2.setChecked(False)
+        elif unit == "um" or unit == "µm":
+            self.unit_radio_button_1.setChecked(False)
+            self.unit_radio_button_2.setChecked(True)
+            
+    def retranslateUi(self, LeftColumn: QWidget) -> None:
+        """
+        Retranslate the UI elements based on the selected language.
+
+        This method updates the text of various UI elements to match the selected
+        language (either English or German). It sets the window title, labels, and
+        button texts accordingly.
+
+        Args:
+            LeftColumn (QWidget): The left column widget.
+        """
+        LeftColumn.setWindowTitle(QCoreApplication.translate("Settings", u"Form", None))
+        self.settings = Settings().items
+        self.language_set = self.settings["language"]
+
+        if self.language_set == "de":
+            self.label_2.setText(QCoreApplication.translate("Settings", u"Info", None))
+            self.label_3.setText(QCoreApplication.translate("Settings", u"Diese Anwendung ermöglicht \n"
+            " die Analyse von Mikroskopieaufnahmen \n"
+            " und erkennt Zellkerne \n"
+            " unter Verwendung von KI.", None))
+            self.manual_label.setText(QCoreApplication.translate("Settings", u"Bedienungsanleitung öffnen", None))
+            self.open_manual_eng_button.setText(QCoreApplication.translate("Settings", u"Open Manual (ENG)", None))
+            self.open_manual_ger_button.setText(QCoreApplication.translate("Settings", u"Bedienungsanleitung öffnen (DE)", None))
+        else:
+            self.label_2.setText(QCoreApplication.translate("Settings", u"Info", None))
+            self.label_3.setText(QCoreApplication.translate("Settings", u"This application allows \n"
+            "to analyse microscopy images\n"
+            " and detects nuclei in \n"
+            "them leveraging the power of AI.", None))
+            self.manual_label.setText(QCoreApplication.translate("Settings", u"Open Manual", None))
+            self.open_manual_eng_button.setText(QCoreApplication.translate("Settings", u"Open Manual (ENG)", None))
+            self.open_manual_ger_button.setText(QCoreApplication.translate("Settings", u"Bedienungsanleitung öffnen (DE)", None))
+            
+
+
+

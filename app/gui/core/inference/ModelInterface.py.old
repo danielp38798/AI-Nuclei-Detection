@@ -1,0 +1,1234 @@
+# sahi test inference
+import os
+import cv2
+# - Import required modules:
+
+# import required functions, classes
+import gui.core.detection_module.detectron2.config
+from gui.core.sahi.auto_model import AutoDetectionModel
+from gui.core.sahi.predict import get_sliced_prediction, predict, get_prediction
+from gui.core.sahi.utils.file import download_from_url
+from gui.core.sahi.utils.cv import read_image
+from IPython.display import Image
+from gui.core.json_settings import Settings
+
+# set torchvision FasterRCNN model
+import torch
+import torch.utils.data
+import torchvision.models.detection
+import torchvision.models.detection.mask_rcnn
+
+import glob
+import time
+from pycocotools import mask
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+import json
+import matplotlib.pyplot as plt
+
+from pprint import pprint as pp
+from gui.core.sahi.utils.cv import read_image_as_pil
+
+import torchvision.transforms.functional as F
+import json
+import numpy as np
+
+from ultralytics import YOLO
+
+    # Import necessary libraries
+import gui.core.detection_module.detectron2
+#from gui.core.detection_module.detectron2.utils.logger import setup_loggerpip
+from gui.core.detection_module.detectron2.engine import DefaultPredictor
+from gui.core.detection_module.detectron2.config import get_cfg
+from gui.core.detection_module.detectron2.data import MetadataCatalog
+from gui.core.detection_module.detectron2.utils.visualizer import Visualizer, ColorMode
+
+import gc 
+
+class JSONSerializer:
+    def serialize_with_conversion(self, obj, filepath):
+        """
+        Serialize the object to JSON, converting numpy arrays to lists of strings.
+        """
+        def convert(obj):
+            if isinstance(obj, np.ndarray):
+                # Convert array elements to strings
+                return obj.astype(str).tolist()
+            elif isinstance(obj, dict):
+                # Recursively apply to dictionary items
+                return {k: convert(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                # Apply to each item in the list
+                return [convert(v) for v in obj]
+            elif isinstance(obj, tuple):
+                # Apply to each item in the tuple
+                return tuple(convert(v) for v in obj)
+            elif isinstance(obj, set):
+                # Apply to each item in the set
+                return {convert(v) for v in obj}
+            
+            else:
+                return obj
+
+        pp(f"obj: {obj}")
+        converted_obj = convert(obj)
+        pp(f"converted_obj: {converted_obj}")
+        with open(filepath, 'w') as json_file:
+            json.dump(converted_obj, json_file, indent=1)
+        
+
+    def deserialize(self, filepath):
+        """
+        Deserialize JSON content from a file. Assumes numpy arrays were stored as lists of strings.
+        """
+        with open(filepath, 'r') as json_file:
+            return json.load(json_file)
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """
+    Special json encoder for numpy types
+    """
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+    
+
+
+import sys
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        # If the application is run as a bundled executable, the PyInstaller
+        # bootloader sets a sys._MEIPASS attribute to the path of the temp folder it
+        # extracts its bundled files to.
+        return sys._MEIPASS
+    else:
+        # Otherwise, just use the directory of the script being run
+        #return os.path.dirname(os.path.abspath(__file__))
+        return os.getcwd()
+
+
+def map_detection_accuracy(accuracy):
+    """
+    detection accuracy could be a value between 1 and 10
+    1 = lowest accuracy allowing the most cells to be detected even with low contrast - cells with low contrast will be detected
+    10 = highest accuracy allowing only the most distinct cells to be detected - cells with low contrast will not be detected
+    """
+    # map detection accuracy to confidence threshold up to 7 percent confidence
+    #confidence_scores = np.linspace(0.45, 0.7, 10).tolist()
+    confidence_scores = np.linspace(0.5, 0.98, 10).tolist()
+    confidence_scores = [round(score, 2) for score in confidence_scores]
+    detection_accuracy = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    detection_accuracy_map = dict(zip(detection_accuracy, confidence_scores))
+    
+    return detection_accuracy_map[accuracy]
+
+
+def sanitise_coco_data(coco_data):
+    """
+    Remove invalid segmentations from a COCO file. 
+    A segmentation polygon is invalid if it has less than 3 pairs of (x, y) coordinates.
+    """
+    #print(f'Checking for invalid segmentations in COCO data...') 
+    for annotation in coco_data['annotations']:
+        segmentations = annotation['segmentation']
+        sanitized_segmentations = []
+        for segmentation in segmentations:
+            if len(segmentation) >= 6:  # Each (x, y) pair takes 2 elements, so 3 pairs = 6 elements
+                #print(f'Found a segmentation with {len(segmentation)} elements, keeping it')
+                sanitized_segmentations.append(segmentation)
+            #else:
+                #print(f'Found a segmentation with {len(segmentation)} elements, discarding it')
+        annotation['segmentation'] = sanitized_segmentations
+    #print('COCO JSON sanitisation complete')
+    return coco_data
+
+class ModelInteractor:
+    """
+    Model interface for evaluation
+    """
+    def __init__(self, 
+                 instances_dict, 
+                 output_dir,
+                physical_image_width, 
+                store_coco_files, 
+                store_csv_file, 
+                store_xlsx_file):
+        self.settings = Settings().items
+        self.results_dict = None
+
+        model_name = self.settings["processing_settings"]["model_selection"]
+        print(f"Model name: {model_name}")
+        
+        if "Mask R-CNN (ResNet 50 + FPN)" in model_name: #or "Mask R-CNN" in model_name:
+            self.model_name = "maskrcnn_resnet50_fpn"
+        elif "Mask R-CNN (ResNeXt 101 + FPN)" in model_name:
+            self.model_name = "maskrcnn_resnext101_fpn"
+
+        elif "Mask R-CNN (ResNet 50 + DC5)" in model_name:
+            self.model_name = "maskrcnn_resnet50_dc5"
+        elif "Mask R-CNN (ResNeXt 101 + DC5)" in model_name:
+            self.model_name = "maskrcnn_resnext101_dc5"
+
+        elif "yolov11" in model_name or "YOLOv11" in model_name:
+            self.model_name = "yolov11"
+        else:
+            print("Model not found.")
+            self.model_name = "maskrcnn_resnext101"
+
+        #print(f"Model name: {self.model_name}")
+        #self.confidence_threshold = 0.65 # set to 0.5 to also detect instances with lower confidence i.e also nuclei with low contrast will be detected
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.detection_accuracy = float(self.settings["processing_settings"]["detection_accuracy"])
+        self.confidence_threshold = self.detection_accuracy
+        print(f"Confidence threshold: {self.confidence_threshold}")
+
+        self.script_dir = get_base_path()   # script directory
+        self.ckpt_dir = os.path.join(self.script_dir, "application_resources", "models")   # checkpoint directory
+        self.instances_dict = instances_dict
+        self.physical_image_width = physical_image_width # in mm
+        if isinstance(output_dir, tuple):
+            self.output_dir = output_dir[0]
+        else:
+            self.output_dir = output_dir
+        #print(f"Output directory: {self.output_dir}")
+
+        self.store_coco_files = store_coco_files
+        self.store_binary_masks = True
+        self.store_csv_file = store_csv_file
+        self.store_xlsx_file = store_xlsx_file
+     
+        self.instance_results_df = None
+        self.instance_results_dict = None
+        self.result = None
+
+        self.detection_module_cfg = None
+
+        # read model_hyperparameters.json in ./applications_resources/models
+        self.model_hyperparameters_path = os.path.join(get_base_path(), "application_resources", "models", "model_hyperparameters.json")
+        with open(self.model_hyperparameters_path, 'r') as fp:
+            self.model_hyperparameters = json.load(fp)
+            
+        self.mask_rcnn_resnet50_dc5_hyperparameters = self.model_hyperparameters["mask_rcnn_resnet50_dc5"]
+        self.mask_rcnn_resnext101_dc5_hyperparameters = self.model_hyperparameters["mask_rcnn_resnext101_dc5"]
+        
+        self.mask_rcnn_resnet50_fpn_hyperparameters = self.model_hyperparameters["mask_rcnn_resnet50_fpn"]
+        self.mask_rcnn_resnext101_fpn_hyperparameters = self.model_hyperparameters["mask_rcnn_resnext101_fpn"]
+        self.yolov11_hyperparameters = self.model_hyperparameters["yolov11"]
+
+        self.serialier = JSONSerializer()
+
+        # setup the model
+        if not hasattr(self, 'model'):
+            self.initialize_model(num_classes=len(self.instances_dict))
+
+    def create_folder(self, folder_name):
+        """
+        Create folder
+        """
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+
+    # Function to create custom metadata
+    def setup_detection_module_predictor(self, model_name="maskrcnn_resnext101_dc5"):
+        print("Setting up detection_module predictor...")
+        cfg = get_cfg()
+        if model_name == "maskrcnn_resnet50_dc5":
+            config_path = os.path.join(self.script_dir, "gui", "core", "detection_module", "configs", "COCO-InstanceSegmentation", "mask_rcnn_R_50_DC5_3x.yaml")
+        elif model_name == "maskrcnn_resnext101_dc5":
+            config_path = os.path.join(self.script_dir, "gui", "core", "detection_module", "configs", "COCO-InstanceSegmentation", "mask_rcnn_R_101_DC5_3x.yaml")
+        
+        elif model_name == "maskrcnn_resnet50_fpn":
+            config_path = os.path.join(self.script_dir, "gui", "core", "detection_module", "configs", "COCO-InstanceSegmentation", "mask_rcnn_R_50_FPN_3x.yaml")
+        elif model_name == "maskrcnn_resnext101_fpn":
+            config_path = os.path.join(self.script_dir, "gui", "core", "detection_module", "configs", "COCO-InstanceSegmentation", "mask_rcnn_X_101_32x8d_FPN_3x.yaml")
+            
+
+        cfg.merge_from_file(config_path)
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1  # Adjust this to match the number of classes
+        self.detection_module_checkpoint_dir = os.path.join(self.ckpt_dir, model_name)
+        list_of_files = []
+        for root, dirs, files in os.walk(self.detection_module_checkpoint_dir):
+            for file in files:
+                if file.endswith(".pth"):
+                    list_of_files.append(os.path.join(root, file))
+        
+        latest_file = max(list_of_files, key=os.path.getctime) 
+        cfg.MODEL.WEIGHTS = latest_file  # Path to the trained model weights
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.6  # Set the testing threshold for this model
+        cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # dump config to yaml file
+        yaml_cfg = gui.core.detection_module.detectron2.config.CfgNode.dump(cfg)
+        self.detection_module_cfg_file = os.path.join(self.detection_module_checkpoint_dir, "config.yaml")
+        
+        with open(self.detection_module_cfg_file, 'w') as fp:
+            fp.write(yaml_cfg)
+
+        # store the config as a class attribute
+        self.detection_module_cfg = cfg 
+
+
+
+    def run_detection_module_model(self, image_path, output_path):
+        """
+        Run detection module model
+        """
+        # Perform inference on each image
+        img = cv2.imread(image_path)
+        outputs = self.detection_module_predictor(img)
+        
+        # Visualize the predictions
+        v = Visualizer(img[:, :, ::-1],
+                    metadata=self.detection_module_metadata,
+                    scale=0.8,
+                    instance_mode=ColorMode.IMAGE_BW)  # Remove the colors of unsegmented pixels
+        v = v.draw_instance_predictions(outputs["instances"].to("cpu"))
+        
+        # Save the output image
+        result = v.get_image()[:, :, ::-1]
+        cv2.imwrite(output_path, result)
+                                                   
+
+    def initialize_model(self, num_classes=2):
+        """
+        Initialize AI-model
+        """
+        print("Initializing AI model...")
+        # load the model
+        """       
+        if self.model_name == "maskrcnn_resnet50":
+            self.model = torchvision.models.get_model(
+                'maskrcnn_resnet50_fpn', weights=None, weights_backbone=torchvision.models.ResNet50_Weights.IMAGENET1K_V1, num_classes=num_classes)
+            # complete data mean: tensor([0.1444, 0.1444, 0.1444])
+            # complete data std: tensor([0.1280, 0.1280, 0.1280])
+            self.model.image_mean = [0.1444, 0.1444, 0.1444]
+            self.model.image_std = [0.1280, 0.1280, 0.1280]
+
+            mask_rcnn_checkpoint_dir = os.path.join(self.ckpt_dir, "maskrcnn_resnet50")
+            list_of_files = glob.glob(os.path.join(mask_rcnn_checkpoint_dir, '*.pth'))
+            latest_file = max(list_of_files, key=os.path.getctime)
+            print(f"Latest checkpoint: {latest_file}")
+            # load the latest checkpoint
+            checkpoint = torch.load(latest_file, map_location=self.device)
+            self.model.load_state_dict(checkpoint['model'])
+            #self.model.eval()
+            print("Checkpoint loaded.")
+
+            self.detection_model = AutoDetectionModel.from_pretrained(
+                model_type='torchvision',
+                model=self.model,
+                confidence_threshold=self.confidence_threshold,
+                device=self.device, # or "cuda:0"
+                load_at_init=True,
+            )
+        """
+       
+        if self.model_name == "maskrcnn_resnet50_dc5":
+
+            self.setup_detection_module_predictor(model_name="maskrcnn_resnet50_dc5")
+
+            self.detection_model = AutoDetectionModel.from_pretrained(
+                model_type='detectron2',
+                model_path=self.detection_module_cfg.MODEL.WEIGHTS,
+                config_path=self.detection_module_cfg_file,
+                confidence_threshold=self.confidence_threshold,
+                device=self.device, 
+            )
+            # create category mapping with keys as category ids and values as category names
+            category_mapping = {str(k): v for k, v in self.instances_dict.items()}
+            #print(f"Category mapping: {category_mapping}")
+            self.detection_model.category_mapping = category_mapping
+            self.detection_model.category_names = list(self.instances_dict.values())
+        
+        elif self.model_name == "maskrcnn_resnext101_dc5":
+    
+            self.setup_detection_module_predictor(model_name="maskrcnn_resnext101_dc5")
+
+            self.detection_model = AutoDetectionModel.from_pretrained(
+                model_type='detectron2',
+                model_path=self.detection_module_cfg.MODEL.WEIGHTS,
+                config_path=self.detection_module_cfg_file,
+                confidence_threshold=self.confidence_threshold,
+                device=self.device, 
+            )
+            # create category mapping with keys as category ids and values as category names
+            category_mapping = {str(k): v for k, v in self.instances_dict.items()}
+            #print(f"Category mapping: {category_mapping}")
+            self.detection_model.category_mapping = category_mapping
+            self.detection_model.category_names = list(self.instances_dict.values())
+        
+        elif self.model_name == "maskrcnn_resnet50_fpn":
+
+            self.setup_detection_module_predictor(model_name="maskrcnn_resnet50_fpn")
+
+            self.detection_model = AutoDetectionModel.from_pretrained(
+                model_type='detectron2',
+                model_path=self.detection_module_cfg.MODEL.WEIGHTS,
+                config_path=self.detection_module_cfg_file,
+                confidence_threshold=self.confidence_threshold,
+                device=self.device, # or "cuda:0"
+                load_at_init=True,
+            )
+            # create category mapping with keys as category ids and values as category names
+            category_mapping = {str(k): v for k, v in self.instances_dict.items()}
+            #print(f"Category mapping: {category_mapping}")
+            self.detection_model.category_mapping = category_mapping
+            self.detection_model.category_names = list(self.instances_dict.values())
+        
+        elif self.model_name == "maskrcnn_resnext101_fpn":
+
+            self.setup_detection_module_predictor(model_name="maskrcnn_resnext101_fpn")	
+
+            self.detection_model = AutoDetectionModel.from_pretrained(
+                model_type='detectron2',
+                model_path=self.detection_module_cfg.MODEL.WEIGHTS,
+                config_path=self.detection_module_cfg_file,
+                confidence_threshold=self.confidence_threshold,
+                device=self.device, # or "cuda:0"
+                load_at_init=True,
+            )
+
+            # create category mapping with keys as category ids and values as category names
+            category_mapping = {str(k): v for k, v in self.instances_dict.items()}
+            #print(f"Category mapping: {category_mapping}")
+            self.detection_model.category_mapping = category_mapping
+            self.detection_model.category_names = list(self.instances_dict.values())
+            
+        elif self.model_name == "yolov11":
+            # load yolo model
+            yolo_checkpoint_dir = os.path.join(self.ckpt_dir, "yolo")
+            list_of_files = glob.glob(os.path.join(yolo_checkpoint_dir, '*.pt'))
+            latest_file = max(list_of_files, key=os.path.getctime)
+            #print(f"Latest checkpoint: {latest_file}")
+            # load the latest checkpoint
+            # yaml_path = os.path.join(yolo_checkpoint_dir, "default.yaml")
+            self.model = YOLO(latest_file)
+
+            self.detection_model = AutoDetectionModel.from_pretrained(
+                model_type='yolov11',
+                model=self.model,
+                confidence_threshold=self.confidence_threshold,
+                device=self.device, # or "cuda:0"
+                load_at_init=True,)
+        
+
+  
+
+    def sliced_inference(self, image_file=None, image_filename=None, verbose=False):
+        """
+        Perform sliced inference on a single image
+        """
+
+        # save hyperparameters to json file
+        hyper_parameters_path = os.path.join(self.output_dir, "hyperparameters.json")
+        
+        if self.model_name == "maskrcnn_resnext101":	
+            with open(hyper_parameters_path, 'w') as fp:
+                json.dump(self.mask_rcnn__resnetx101_hyperparameters, fp, indent=4)
+        elif self.model_name == "maskrcnn_resnet50":
+            with open(hyper_parameters_path, 'w') as fp:
+                json.dump(self.mask_rcnn__resnet50_hyperparameters, fp, indent=4)
+        elif self.model_name == "yolov11":
+            with open(hyper_parameters_path, 'w') as fp:
+                json.dump(self.yolov11_hyperparameters, fp, indent=4)
+
+        """
+        if self.model_name == "maskrcnn_resnet50":
+            # DetectonModel
+            print("Running inference with Mask R-CNN (ResNet50) model...")
+                
+            # perform sliced inference
+            self.result = get_sliced_prediction(
+                image=image_file,
+                detection_model=self.detection_model,
+                slice_height = 400,
+                slice_width = 400,
+                overlap_height_ratio = 0.2,
+                overlap_width_ratio = 0.2,
+                verbose=1,           
+                # current implementation:
+                interim_dir=None,
+                postprocess_match_metric="IOS",
+                postprocess_class_agnostic=True,
+                #postprocess_match_metric="IOU",
+                #postprocess_type="GREEDYNMM",     
+                postprocess_match_threshold=0.6,  # 0.5
+            )
+
+            # evaluate predictions
+            self.evaluate_predictions(image_filename=image_filename, verbose=verbose)
+            
+            # visualize predicted bounding boxes and masks over the original image
+            predictions_export_dir = os.path.join(self.output_dir, "predictions")
+            self.create_folder(predictions_export_dir)
+            self.result.export_visuals(export_dir=predictions_export_dir,
+                                file_name=f"{os.path.splitext(os.path.basename(image_filename))[0]}_prediction",
+                                text_size=0.25, rect_th=2,hide_labels=False, hide_conf=False)
+            
+            # store the results dictionary
+            if self.results_dict is None:
+                self.results_dict = self.result.results_dict
+            else:
+                self.results_dict.update(self.result.results_dict)
+
+            # store color_dict and category_dict in a json file
+            color_dict = self.result.results_dict["color_dict"]
+            category_dict = self.result.results_dict["category_name_dict"]
+            color_dict_path = os.path.join(self.output_dir, "color_dict.json")
+            category_dict_path = os.path.join(self.output_dir, "category_name_dict.json")
+    
+
+            with open(color_dict_path, 'w') as fp:
+                json.dump(color_dict, fp, indent=4)
+            with open(category_dict_path, 'w') as fp:
+                json.dump(category_dict, fp, indent=4)            
+
+            print("Inference with Mask R-CNN complete.")  
+        """
+
+
+        if self.model_name == "yolov11":
+
+            print("Running inference with YOLOv11 model...")
+                
+            # save hyperparameters to json file
+            hyper_parameters_path = os.path.join(self.output_dir, "hyperparameters.json")
+            with open(hyper_parameters_path, 'w') as fp:
+                json.dump(self.yolov11_hyperparameters, fp, indent=4)
+
+            # perform sliced inference
+            self.result = get_sliced_prediction(
+                image=image_file,
+                detection_model=self.detection_model,
+                slice_height = 400,
+                slice_width = 400,
+                overlap_height_ratio = 0.2,
+                overlap_width_ratio = 0.2,
+                verbose=0,           
+                postprocess_type="NMM",
+            )
+
+            # evaluate predictions
+            self.evaluate_predictions(image_filename=image_filename, verbose=verbose)
+
+            # visualize predicted bounding boxes and masks over the original image
+            predictions_export_dir = os.path.join(self.output_dir, "predictions")
+            self.create_folder(predictions_export_dir)
+            self.result.export_visuals(export_dir=predictions_export_dir,
+                                file_name=f"{os.path.splitext(os.path.basename(image_filename))[0]}_prediction",
+                                text_size=0.25, rect_th=2,hide_labels=False, hide_conf=False)
+            
+            # store the results dictionary
+            if self.results_dict is None:
+                self.results_dict = self.result.results_dict
+            else:
+                self.results_dict.update(self.result.results_dict)
+
+            # store color_dict and category_dict in a json file
+            color_dict = self.result.results_dict["color_dict"]
+            category_dict = self.result.results_dict["category_name_dict"]
+            color_dict_path = os.path.join(self.output_dir, "color_dict.json")
+            category_dict_path = os.path.join(self.output_dir, "category_name_dict.json")
+            
+
+            with open(color_dict_path, 'w') as fp:
+                json.dump(color_dict, fp, indent=4)
+            with open(category_dict_path, 'w') as fp:
+                json.dump(category_dict, fp, indent=4)
+            print("Inference with YOLO complete.")
+        
+        elif self.model_name == "maskrcnn_resnet50_dc5" or \
+                self.model_name == "maskrcnn_resnext101_dc5" or \
+                self.model_name == "maskrcnn_resnet50_fpn" or \
+                self.model_name == "maskrcnn_resnext101_fpn":
+
+            print(f"Running inference with {self.model_name} model...")
+            if self.model_name == "maskrcnn_resnet50_dc5":
+                hyper_parameters = self.mask_rcnn_resnet50_dc5_hyperparameters
+            elif self.model_name == "maskrcnn_resnext101_dc5":
+                hyper_parameters = self.mask_rcnn_resnext101_dc5_hyperparameters
+            elif self.model_name == "maskrcnn_resnet50_fpn":
+                hyper_parameters = self.mask_rcnn_resnet50_fpn_hyperparameters
+            elif self.model_name == "maskrcnn_resnext101_fpn":
+                hyper_parameters = self.mask_rcnn_resnext101_fpn_hyperparameters
+                
+            # save hyperparameters to json file
+            hyper_parameters_path = os.path.join(self.output_dir, "hyperparameters.json")
+            with open(hyper_parameters_path, 'w') as fp:
+                json.dump(hyper_parameters, fp, indent=4)
+         
+            # perform sliced inference
+            self.result = get_sliced_prediction(
+                image=image_file,
+                detection_model=self.detection_model,
+                slice_height = 400,
+                slice_width = 400,
+                overlap_height_ratio = 0.2,
+                overlap_width_ratio = 0.2,
+                verbose=0,           
+                interim_dir=None,    
+                postprocess_type="NMM",   
+            )
+
+            
+
+            # visualize predicted bounding boxes and masks over the original image
+            predictions_export_dir = os.path.join(self.output_dir, "predictions")
+            self.create_folder(predictions_export_dir)
+            self.result.export_visuals(export_dir=predictions_export_dir,
+                                file_name=f"{os.path.splitext(os.path.basename(image_filename))[0]}_prediction",
+                                text_size=0.25, rect_th=2,hide_labels=False, hide_conf=False)
+            # evaluate predictions
+            self.evaluate_predictions(image_filename=image_filename, verbose=verbose)
+            
+            # store the results dictionary
+            if self.results_dict is None:
+                self.results_dict = self.result.results_dict
+            else:
+                self.results_dict.update(self.result.results_dict)
+
+            # store color_dict and category_dict in a json file
+            color_dict = self.result.results_dict["color_dict"]
+            category_dict = self.result.results_dict["category_name_dict"]
+            color_dict_path = os.path.join(self.output_dir, "color_dict.json")
+            category_dict_path = os.path.join(self.output_dir, "category_name_dict.json")
+
+            with open(color_dict_path, 'w') as fp:
+                json.dump(color_dict, fp, indent=4)
+            with open(category_dict_path, 'w') as fp:
+                json.dump(category_dict, fp, indent=4)
+        
+        print(f"Sliced inference for image '{image_filename}' complete.")
+   
+    def get_results_dict(self):
+        """
+        Get results as dictionary (dict: image, file_name, output_dir, elapsed_time, color_dict, category_dict)   
+        """
+        return self.results_dict
+
+    def get_instance_results_df(self):
+        """
+        Get inference result as pandas dataframe
+        """
+        return self.instance_results_df
+    
+    def get_instance_results_dict(self):
+        """
+        Get inference result as dictionary
+        """
+        return self.instance_results_dict
+
+
+    def get_pixel_size(self):
+        """
+        Get pixel size from image dimensions (in pixels) and physical dimensions of the microscope (in mm)
+        """
+        return self.pixel_size
+    
+    def calculate_pixel_size(self, image_width):
+        """
+        Get pixel size from image dimensions (in pixels) and physical dimensions of the microscope (in mm)
+        """
+        if image_width:
+            self.pixel_size = self.physical_image_width / image_width  # in mm
+        return self.pixel_size
+    
+    def evaluate_predictions(self, image_filename=None, verbose=False):
+
+        """
+        Calculate the amount of predicted objects per class,
+        area of each predicted object and total area of all predicted objects on a per image basis.
+
+        Arguments:
+            image_filename: filename of the image (without extension)
+        Returns:
+            
+
+        """
+        object_prediction_list = self.result.object_prediction_list
+        #print(f"Number of object predictions: {len(object_prediction_list)}")
+        #print("\n")
+        elapsed_time = time.time()
+        #scale area to mm^2; determine pixel size in another function
+        pixel_size = self.get_pixel_size()  # in mm
+        #get the total area of the image
+        image_area = self.result.image_width * self.result.image_height * pixel_size**2 # in mm^2
+        # loop over object predictions
+        total_area = 0
+        # store the instance count for each class in a dictionary
+        instance_results = {}
+        #print(f"Instances dict: {self.instances_dict}")
+        for id in self.instances_dict.keys():
+            instance_results[id] = {
+                'filename': image_filename,
+                'class name': self.instances_dict[id],
+                'count': 0, 
+                'area (mm2)': 0, 
+                'area (µm2)': 0,
+                'area (relative)': 0, 
+                'density (per mm2)': 0,
+                'density (per µm2)': 0
+                }
+            
+        #print(f"Object prediction list: {len(object_prediction_list)}")
+
+        for object_prediction in object_prediction_list:
+            object_prediction = object_prediction.deepcopy()
+            if object_prediction.bbox is not None and object_prediction.mask is not None:
+
+                if object_prediction.score.value >= self.confidence_threshold:
+                    #print(f"Category name: {object_prediction.category.name}")
+                    #print(f"Category id: {object_prediction.category.id}")
+                    #print(f"Score: {object_prediction.score}")
+                    cat_id = object_prediction.category.id
+                    cat_name = object_prediction.category.name
+
+                    if self.model_name == "yolov11":
+                        instance_results[cat_id+1]['count'] += 1 # add 1 to the category id to match the instance id in the dictionary, yolos category id starts from 0
+                        #instance_results[cat_id]['count'] += 1
+                    else:
+                        instance_results[cat_id]['count'] += 1
+            
+                    # deepcopy mask so that original is not altered
+                    bool_mask = object_prediction.mask.bool_mask # 2D boolean mask array 
+                    # calculate area of mask in pixels
+                    rle = mask.encode(np.asfortranarray(bool_mask))
+                    area = mask.area(rle) # area of mask in pixels
+                    area_mm = area * pixel_size**2 # area of mask in mm^2
+                    total_area += area_mm
+                    #instance_results[cat_id]['area (mm2)'] += area_mm
+                    if self.model_name == "yolov11":
+                        instance_results[cat_id+1]['area (mm2)'] += area_mm
+                        #instance_results[cat_id]['area (mm2)'] += area_mm	
+                    else:
+                        instance_results[cat_id]['area (mm2)'] += area_mm
+        #print(f"instance_results: {instance_results}")
+
+        image_area_um = image_area * 1e6
+        total_area = round(total_area, 6) # in mm^2
+        total_area_um = total_area * 1e6 # in µm^2
+
+        if verbose:
+            print(f"Area of the image: {round(image_area,8)} mm^2; {round(image_area_um,2)} µm^2")
+            print(f"Total area of all predicted objects: {round(total_area,6)} mm^2; {round(total_area_um,2)} µm^2")
+
+        for id in self.instances_dict.keys():
+            # print count
+            count = instance_results[id]['count']
+            # print area 
+            area_mm = round(instance_results[id]['area (mm2)'], 8) 
+            instance_results[id]['area (mm2)'] = area_mm
+            area_um = area_mm * 1e6 # in µm^2
+            #print(f"area of class {id} '{self.instances_dict[id]}': {area_um} µm^2")
+            instance_results[id]['area (µm2)'] = area_um
+            # print relative area of instances of each class
+            percentage = round((area_mm / image_area * 100), 2) # in %
+            instance_results[id]['area (relative)'] = percentage
+            # calc the density of predicted objects per class relative to the image area
+            density_mm = round(( count / image_area), 1) # in objects/mm^2
+            instance_results[id]['density (per mm2)'] = density_mm
+            # print density in objects/µm^2
+            density_um = density_mm / 1e6 # in objects/µm^2
+            instance_results[id]['density (per µm2)'] = density_um
+
+            if verbose:
+                print("\n")
+                print(f"Count of class {id} '{self.instances_dict[id]}': {count}")
+                print(f"Area covered by instances of class {id} '{self.instances_dict[id]}': {area_mm} mm^2; {area_um} µm^2")
+                print(f"Percentage of image area covered by instances of class {id} '{self.instances_dict[id]}': {percentage} %")
+                print(f"Density of class {id} '{self.instances_dict[id]}': {density_mm} objects/mm^2; {density_um} objects/µm^2")
+
+
+            # calculate the count ratio between instances of class 1 and class 2 if there are two classes
+            if id != 1:
+            #count_ratio = round(instance_results[1]['count'] / instance_results[id]['count'], 3)*100
+            # avoid division by zero
+                if instance_results[id]['count'] == 0:
+                    count_ratio = 0
+                elif 1 in instance_results.keys():
+                    class_two_count = instance_results.get(1)['count']
+                    if class_two_count == 0:
+                        count_ratio = 0
+                    else:
+                        count_ratio = round(class_two_count / instance_results[id]['count'], 3)*100
+                if verbose:
+                    print(f"Count ratio (class 1 / class {id}): {count_ratio} %")
+                #print(f"Count ratio (class {id} / class 1): {count_ratio2}")
+       
+
+        elapsed_time = time.time() - elapsed_time
+        #print(f"Elapsed time: {elapsed_time} s")
+
+        # store results in a pandas dataframe
+        df = pd.DataFrame.from_dict(instance_results, orient='index')
+
+        image_data_dict = {"filename": image_filename,
+            "image_area": [image_area, image_area_um], # in mm^2 and µm^2
+            "class_area": {},
+            "class_area_relative": {},
+            "class_count": {},
+            "class_density": {},
+        }
+        # create keys for each class
+        for id in self.instances_dict.keys():   
+            image_data_dict["class_area"][id] = []
+            image_data_dict["class_density"][id] = []
+
+        for id in self.instances_dict.keys():
+            # values in mm and mm^2
+            image_data_dict["class_area"][id].append(instance_results[id]['area (mm2)'])
+            image_data_dict["class_area_relative"][id] = instance_results[id]['area (relative)']
+            image_data_dict["class_count"][id] = instance_results[id]['count']
+            image_data_dict["class_density"][id].append(instance_results[id]['density (per mm2)'])
+            # values in µm and µm^2
+            image_data_dict["class_area"][id].append(instance_results[id]['area (µm2)'])
+            image_data_dict["class_density"][id].append(instance_results[id]['density (per µm2)'])
+
+        self.instance_results_dict = image_data_dict
+
+        #self.instance_results = instance_results
+        self.instance_results_df = df
+
+    
+    def write_json_results(self, results_dict):
+        """
+        Write results to json file
+        """
+        # dump the results dictionary to a json file
+        filename_json = f"instances_results.json"
+        outpath = os.path.join(self.output_dir, filename_json)
+        print(f"Writing results to {outpath}")
+        
+        with open(outpath, 'w') as fp:
+            json.dump(results_dict, fp, indent=4, cls=NumpyEncoder)
+
+    def write_csv_results(self, df):
+        """
+        Write results to csv file
+        """
+        # dump the results dictionary to a json file
+        filename_csv = f"instances_results.csv"
+        outpath = os.path.join(self.output_dir, filename_csv)
+        df.to_csv(outpath)
+
+    def write_to_excel(self, df):
+
+        dfs = {'image_analysis': df}  # can send a dict of dataframes to to_excel as well
+        filename_xlsx = f"instances_results.xlsx"
+        outpath = os.path.join(self.output_dir, filename_xlsx)
+        writer = pd.ExcelWriter(outpath, engine='xlsxwriter')
+        for sheetname, df in dfs.items():  # loop through `dict` of dataframes
+            df.to_excel(writer, sheet_name=sheetname, index=False)  # send df to writer
+
+            worksheet = writer.sheets[sheetname]  # pull worksheet object
+            # workbook is an instance of the whole book - used i.e. for cell format assignment 
+            workbook = writer.book
+
+            header_cell_format = workbook.add_format()
+            header_cell_format.set_align('center')
+            header_cell_format.set_align('vcenter')
+
+            # create list of dicts for header names 
+            #  (columns property accepts {'header': value} as header name)
+            col_names = [{'header': col_name} for col_name in df.columns]
+
+            # add table with coordinates: first row, first col, last row, last col; 
+            #  header names or formatting can be inserted into dict 
+            worksheet.add_table(0, 0, df.shape[0], df.shape[1]-1, {
+                'columns': col_names,
+                # 'style' = option Format as table value and is case sensitive 
+                # (look at the exact name into Excel)
+                'style': 'Table Style Medium 10'
+            })
+
+            # determine max col width 
+            for idx, col in enumerate(df):  # loop through all columns
+                series = df[col]
+                max_len = max((
+                    series.astype(str).map(len).max(),  # len of largest item
+                    len(str(series.name))  # len of column name/header
+                    )) + 3  # adding a little extra space
+                worksheet.set_column(idx, idx, max_len)  # set column width
+
+            # set header format
+                
+            # skip the loop completly if AutoFit for header is not needed
+            for i, col in enumerate(col_names):
+                # apply header_cell_format to cell on [row:0, column:i] and write text value from col_names in
+                worksheet.write(0, i, col['header'], header_cell_format)
+                
+        writer.close()
+
+
+    def save_coco_predictions(self, image_file=None):
+        # convert predictions to COCO annotations
+        coco_list = self.result.to_coco_annotations(image_id=0)
+        # save coco annotations to json file
+        predictions_coco_export_dir = os.path.join(self.output_dir, "coco")
+        self.create_folder(predictions_coco_export_dir)
+        coco_json_path = os.path.join(predictions_coco_export_dir, f"{os.path.splitext(os.path.basename(image_file))[0]}_coco.json")
+        with open(coco_json_path, 'w') as f:
+            json.dump(coco_list, f)
+
+    def get_coco_predictions_for_image(self, image_file=None, image_id=0):
+        # convert predictions to COCO annotations
+        coco_list = self.result.to_coco_annotations(image_id=image_id)
+        # add annotation id to each annotation
+        for i, coco_dict in enumerate(coco_list):
+            coco_dict["id"] = i+1
+
+        return coco_list
+
+    def save_binary_masks(self, image_file=None):
+        # save binary masks to disk
+        image_basename = os.path.basename(image_file)
+        #print(f"Image basename: {image_basename}")
+        binary_masks_export_dir = os.path.join(self.output_dir, "segmentation_masks")
+        mask_dir = os.path.join(binary_masks_export_dir, image_basename)
+        #print(f"Mask directory: {mask_dir}")
+        self.create_folder(mask_dir)
+        self.result.store_binary_masks(export_dir=mask_dir, 
+                                       file_name=f"cell", format="png")
+
+
+    def run_inference(self, image_files, trial_dir, language="eng", results_dict=None, analysis_thread_should_stop=None):
+        """
+        Perform inference on a single image, yields process and status updates
+
+        Arguments:
+
+        Returns:
+            process_value: int
+            status: str
+        """
+
+        self.results_dict = results_dict
+        if not hasattr(self, 'model'):
+            self.initialize_model()
+        else:
+            print("Model already initialized.")
+    
+
+        inference_time = time.time()
+  
+        num_classes = len(self.instances_dict.keys())
+        #class_names = {instance_name for instance_name in self.instances_dict.values()}
+        num_images = len(image_files)   
+        date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+        class_names = [self.instances_dict[id] for id in self.instances_dict.keys()]
+        trial_name = os.path.basename(trial_dir)
+        if self.results_dict is None:
+            results_dict = {
+                "trial": trial_name,
+                "date": date,
+                "num_images": num_images,
+                "num_classes": num_classes, 
+                "class_names": class_names,  # convert set to list
+                "image_data": {os.path.basename(image_file): {} for image_file in image_files} # create empty dictionary for each image
+            }
+        else:
+            results_dict = self.results_dict.copy() # copy the results dictionary, all keys and values
+
+            if "class_names" not in results_dict.keys():
+                results_dict["class_names"] = class_names
+            if "trial" not in results_dict.keys():
+                results_dict["trial"] = trial_name
+            if "date" not in results_dict.keys():
+                results_dict["date"] = date
+            if "num_images" not in results_dict.keys():
+                results_dict["num_images"] = num_images
+            if "num_classes" not in results_dict.keys():
+                results_dict["num_classes"] = num_classes
+            
+            if "image_data" not in results_dict.keys():
+                results_dict["image_data"] = {os.path.basename(image_file): {} for image_file in image_files}
+            else:
+                for image_file in image_files:
+                    if os.path.basename(image_file) not in results_dict["image_data"].keys():
+                        results_dict["image_data"][os.path.basename(image_file)] = {}
+
+
+            #print(f"Results dictionary: {results_dict}")
+ 
+        # write the results dictionary to a json file
+        self.write_json_results(results_dict)
+
+        # get initial image dimensions from json file --> original image size
+        image_dims_json = os.path.join(trial_dir, "images_dims.json")
+        with open(image_dims_json, 'r') as f:
+            image_dimensions = json.load(f)
+
+        
+        # Start the timer
+        start_time = time.time()
+        ETA = 0
+        if language == "eng":
+            ETA_text = "Calculating..."
+        elif language == "de":
+            ETA_text = "Berechne..."
+
+        # create empty coco file
+        if self.store_coco_files:
+            print("Creating COCO file...")
+            coco_export_dir = os.path.join(self.output_dir, "coco")
+            self.create_folder(coco_export_dir)
+            coco_json_path = os.path.join(coco_export_dir, "coco.json")
+            coco_template = {
+                "info": {},
+                "licenses": [],
+                "images": [],
+                "annotations": [],
+                "categories": []
+            }
+            coco_template["info"] = {
+                "description": "COCO dataset for instance segmentation",
+                "url": "http://cocodataset.org",
+                "version": "1.0",
+                "year": 2022,
+                "contributor": "CellSeg",
+                "date_created": date
+            }
+            coco_template["licenses"] = [
+                {
+                    "url": "http://creativecommons.org/licenses/by-nc-sa/2.0/",
+                    "id": 1,
+                    "name": "Attribution-NonCommercial-ShareAlike License"
+                }
+            ]
+            coco_template["categories"] = [
+                {
+                    "supercategory": "",
+                    "id": 1,
+                    "name": "nucleus",    
+                },
+            ]
+           
+            with open(coco_json_path, 'w') as f:
+                json.dump(coco_template, f, indent=4)
+
+        # Loop through all images
+        for image_num, image_file in enumerate(image_files):
+        #for image_num, image_file in tqdm(enumerate(image_files), total=len(image_files), desc=f"Performing Inference ... ", unit="image"):
+            # get file name
+
+            print(f"Analyzing image {image_num + 1} of {len(image_files)}: {os.path.basename(image_file)}")
+
+            if analysis_thread_should_stop == True:
+                print("Analysis stopped.")
+                optimize_VRAM_usage()
+                 # clear unused variables
+                if hasattr(self, 'detection_model'):
+                    del self.detection_model
+                if hasattr(self, 'model'):
+                    del self.model
+                if hasattr(self, 'detection_module_predictor'):
+                    del self.detection_module_predictor
+                if hasattr(self, 'detection_module_cfg'):
+                    del self.detection_module_cfg
+                if hasattr(self, 'result'):
+                    del self.result
+                break
+
+            filename = os.path.basename(image_file)
+            #filename = os.path.splitext(filename)[0] # remove file extension
+
+            process_value = int((image_num) / len(image_files) * 100)
+            if language == "eng":
+                status = f"Processing image {image_num + 1} of {len(image_files)}: {filename} \n\n Time left: {ETA_text}"
+            elif language == "de":
+                status = f"Verarbeite Bild {image_num + 1} von {len(image_files)}: {filename} \n\n Verbleibende Zeit: {ETA_text}"
+
+            yield (image_num, process_value, status, 0)  
+
+
+            image_dims = image_dimensions[filename]
+            # get the image dimensions
+            if len(image_dims["initial"]) == 2 and len(image_dims["final"]) == 2:
+                initial_image_width, initial_image_height = image_dims["initial"]
+                final_image_width, final_image_height = image_dims["final"]
+            elif len(image_dims["initial"]) == 3 and len(image_dims["final"]) == 3:
+                initial_image_width, initial_image_height, _ = image_dims["initial"]
+                final_image_width, final_image_height, _ = image_dims["final"]
+            else:
+                print("Invalid image dimensions.")
+                initial_image_width, initial_image_height = 0, 0
+                final_image_width, final_image_height = 0, 0
+
+            # if the final image dimensions differ from the initial image dimensions,
+            # the image has been resized and the pixel size has to be recalculated
+            if initial_image_width != final_image_width or initial_image_height != final_image_height:
+                #print(f"Image {filename} has been resized.")
+                pixel_size = self.calculate_pixel_size(final_image_width)
+                #print(f"Pixel size: {pixel_size}")
+            else:
+                pixel_size = self.calculate_pixel_size(initial_image_width)
+                #print(f"Pixel size: {pixel_size}")
+
+            image = read_image(image_file)
+            
+            # perform sliced inference per image
+            with torch.no_grad():
+                self.sliced_inference(image_file=image, image_filename=filename, verbose=False)
+            
+            # get the instance results
+            instances_results_df = self.get_instance_results_df()
+            # get the results as a dictionary
+            instances_results_dict = self.get_instance_results_dict()
+            
+            # add instance results to the results dictionary
+
+            results_dict["image_data"][filename] = instances_results_dict
+            self.write_json_results(results_dict)
+
+            # store the dataframe to csv
+            if image_num == 0:
+                final_df = instances_results_df
+            else:
+                # concatenate all results to a single dataframe
+                final_df = pd.concat([final_df, instances_results_df], axis=0)
+
+            if self.store_csv_file:
+                # save results to csv
+                self.write_csv_results(final_df)
+
+            # save results to xlsx
+            if self.store_xlsx_file:
+                self.write_to_excel(final_df)
+            
+
+            # get the prediction in COCO format for the current image
+            coco_predictions = self.get_coco_predictions_for_image(image_file=image, image_id=image_num+1)
+            # update the coco json file
+            if self.store_coco_files:
+                if not os.path.exists(coco_json_path):
+                    os.makedirs(coco_json_path)
+                    print("Creating COCO file...")
+                    coco_template = {
+                        "info": {},
+                        "licenses": [],
+                        "images": [],
+                        "annotations": [],
+                        "categories": []
+                    }
+                    coco_template["info"] = {
+                        "description": "COCO dataset for instance segmentation",
+                        "url": "http://cocodataset.org",
+                        "version": "1.0",
+                        "year": 2022,
+                        "contributor": "CellSeg",
+                        "date_created": date
+                    }
+                    coco_template["licenses"] = [
+                        {
+                            "url": "http://creativecommons.org/licenses/by-nc-sa/2.0/",
+                            "id": 1,
+                            "name": "Attribution-NonCommercial-ShareAlike License"
+                        }
+                    ]
+                    coco_template["categories"] = [
+                        {
+                            "supercategory": "",
+                            "id": 1,
+                            "name": "nucleus",    
+                        },
+                    ]
+          
+                    with open(coco_json_path, 'w') as f:
+                        json.dump(coco_template, f, indent=4)
+                
+                with open(coco_json_path, 'r') as f:
+                    coco_json = json.load(f)
+
+                images_dict_for_coco = {"id": image_num+1, "file_name": filename, "height": final_image_height, "width": final_image_width}
+                coco_json["images"].append(images_dict_for_coco)
+
+                coco_json["annotations"].extend(coco_predictions)
+            
+                # sanitise the json coco file
+                coco_json = sanitise_coco_data(coco_json)
+
+                with open(coco_json_path, 'w') as f:
+                    json.dump(coco_json, f, indent=4)
+                
+
+
+            # save binary masks
+            if self.store_binary_masks:
+                self.save_binary_masks(image_file=image_file)
+            
+            
+            process_value = int((image_num + 1) / len(image_files) * 100)
+
+            # Stop the timer
+            end_time = time.time()
+            time_taken = end_time - start_time
+            # Calculate the remaining images
+            remaining_images = num_images - image_num
+            # Calculate the remaining time
+            ETA = time_taken / (image_num + 1) * remaining_images
+            ETA_text = time.strftime("%H:%M:%S", time.gmtime(ETA))
+
+
+       
+
+            #status = f"Processed image {image_num + 1} of {len(image_files)}: {filename}"
+            if language == "eng":
+                status = f"Processed image {image_num + 1} of {len(image_files)}: {filename} \n ETA: {ETA_text}"
+            elif language == "de":
+                status = f"Bild {image_num + 1} von {len(image_files)} verarbeitet: {filename} \n ETA: {ETA_text}"
+
+            # yield process and status updates
+            yield (image_num, process_value, status, results_dict)
+
+            del image, self.result, instances_results_df, instances_results_dict
+            torch.cuda.empty_cache()
+            print(f"Image {filename} processed.")
+
+
+        
+
+        inference_time = time.time() - inference_time
+        print(f"Total inference time: {round(inference_time, 2)} s")
+    
+        # free GPU cache after completion
+        optimize_VRAM_usage()
+
+        # clear all unused variables
+        if hasattr(self, 'detection_model'):
+            del self.detection_model
+        if hasattr(self, 'model'):
+            del self.model
+        if hasattr(self, 'detection_module_predictor'):
+            del self.detection_module_predictor
+        if hasattr(self, 'detection_module_cfg'):
+            del self.detection_module_cfg
+        if hasattr(self, 'result'):
+            del self.result
+        if hasattr(self, 'instance_results_df'):
+            del self.instance_results_df
+        if hasattr(self, 'instance_results_dict'):
+            del self.instance_results_dict
+        if hasattr(self, 'results_dict'):
+            del self.results_dict
+        if hasattr(self, 'pixel_size'):
+            del self.pixel_size
+
+
+
+        #yield 100, "Inference complete."
+
+
+def optimize_VRAM_usage():
+    """
+    Optimize VRAM usage by clearing the cache
+    """
+    print("Optimizing VRAM usage...")
+    # clear cache
+    gc.collect()
+    torch.cuda.empty_cache()
+    print("VRAM optimized.")
+    print(f"Current VRAM usage (MB): {torch.cuda.memory_allocated() / 1024**2}")

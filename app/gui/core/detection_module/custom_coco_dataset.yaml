@@ -1,0 +1,4 @@
+train: train  # Path to training images directory
+val: val  # Path to validation images directory
+nc: 1  # Number of classes in your dataset
+names: ['nucleus']  # List of class names
