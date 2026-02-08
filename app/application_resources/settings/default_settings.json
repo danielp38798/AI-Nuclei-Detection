@@ -1,0 +1,54 @@
+{
+    "app_name": "AI Cell Detection",
+    "language": "eng",
+    "version": "v2.0.0",
+    "copyright": "By: Daniel Pointner",
+    "year": 2024,
+    "theme_name": "bright_theme_1",
+    "theme_mode": "light",
+    "custom_title_bar": "true",
+    "startup_size": [
+        1400,
+        1000
+    ],
+    "minimum_size": [
+        1000,
+        850
+    ],
+    "left_menu_size": {
+        "minimum": 50,
+        "maximum": 240
+    },
+    "left_menu_content_margins": 3,
+    "left_column_size": {
+        "minimum": 0,
+        "maximum": 240
+    },
+    "right_column_size": {
+        "minimum": 0,
+        "maximum": 240
+    },
+    "time_animation": 500,
+    "font": {
+        "family": "Segoe UI",
+        "title_size": 10,
+        "text_size": 9
+    },
+    "processing_settings": {
+        "detection_accuracy": 0.95,
+        "model_selection": "Mask R-CNN (ResNeXt 101 + DC5)",
+        "filter_images": "False",
+        "name_filter": "EDF_RAW_ch00",
+        "save_csv": "True",
+        "save_excel": "True",
+        "save_coco": "True",
+        "image_size": 0.34755,
+        "unit": "mm",
+        "convert_img_to_8bit": "True",
+        "crop_images": "False",
+        "crop_left": "0.0",
+        "crop_right": "0.0",
+        "crop_top": "15.0",
+        "crop_bottom": "15.0"
+    }
+}

@@ -1,0 +1,8 @@
+{
+    "maskrcnn_resnet50_c4": {
+        "instances": {"1": "nucleus"}
+    },
+    "maskrcnn_resnet101_dc5": {
+        "instances": {"1": "nucleus"}
+    }
+}

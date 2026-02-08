@@ -1,0 +1,29 @@
+{
+
+    "maskrcnn_resnet50_c4": {
+        "model_name": "mask_rcnn_resnet50_c4",
+        "model_description": "Mask R-CNN",
+        "lr": 0.002,
+        "optimizer": "SGD",
+        "momentum": 0.9,
+        "weight_decay": 0.0001,
+        "batch_size": 1,
+        "epochs": 25,
+        "backbone": "ResNet50 + C4",
+        "pretrained_weights_name": "COCO Dataset (Click to download weights file)",
+        "pretrained_weights_url": "https://dl.fbaipublicfiles.com/detectron2/COCO-InstanceSegmentation/mask_rcnn_R_50_C4_3x/137849525/model_final_4ce675.pkl"
+    },
+    "maskrcnn_resnet101_dc5": {
+        "model_name": "mask_rcnn_resnet101_dc5",
+        "model_description": "Mask R-CNN",
+        "lr": 0.002,
+        "optimizer": "SGD",
+        "momentum": 0.9,
+        "weight_decay": 0.0001,
+        "batch_size": 1,
+        "epochs": 25,
+        "backbone": "ResNet101 + DC5",
+        "pretrained_weights_name": "COCO Dataset (Click to download weights file)",
+        "pretrained_weights_url": "https://dl.fbaipublicfiles.com/detectron2/COCO-InstanceSegmentation/mask_rcnn_R_101_DC5_3x/138363294/model_final_0464b7.pkl"
+    }
+}
