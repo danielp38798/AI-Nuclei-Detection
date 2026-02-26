@@ -643,8 +643,8 @@ class ModelInteractor:
             out_file = f"{os.path.splitext(os.path.basename(image_filename))[0]}_clusters.png"
             #output_path = os.path.join(export_dir, out_file)
             output_path = os.path.join(self.clusters_results_dir, out_file)
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
-            print(f"Saved overlay plot to: {output_path}")
+            plt.savefig(output_path, dpi=600, bbox_inches='tight')
+            #print(f"Saved overlay plot to: {output_path}")
 
     def evaluate_predictions(self, image_filename: str = None, verbose: bool = True) -> None:
         """Evaluate model predictions for a single image and compute per-image,
@@ -1175,7 +1175,7 @@ class ModelInteractor:
         df_clusters = getattr(self, "clusters_summary_df", pd.DataFrame())
         img = np.array(getattr(self.result, "image", None))
 
-        print(f"\n🔍 Inspecting {len(df_cells)} detected objects and {len(df_clusters)} clusters...")
+        #print(f"\nInspecting {len(df_cells)} detected objects and {len(df_clusters)} clusters...")
 
         # limit for performance
         if len(df_cells) > max_objects:
@@ -1185,7 +1185,7 @@ class ModelInteractor:
  
         # --- 1. Metric distributions ---
         if show_metrics:
-            print("📈 Showing shape and spacing metrics...")
+            #print("Showing shape and spacing metrics...")
             fig, axes = plt.subplots(2, 2, figsize=(12,10))
             sns.histplot(df_cells["solidity"], bins=40, ax=axes[0,0], color="steelblue")
             axes[0,0].set_title("Solidity distribution")
@@ -1202,14 +1202,13 @@ class ModelInteractor:
             axes[1,1].set_title("Major vs Minor axis length")
             plt.tight_layout()
             image_file = f"{os.path.splitext(os.path.basename(image_filename))[0]}_metrics_distributions.png"
-            plt.savefig(os.path.join(self.clusters_results_dir, image_file), dpi=300, bbox_inches='tight')
-            print(f"Saved metrics distributions plot to: {os.path.join(self.clusters_results_dir, image_file)}")
+            plt.savefig(os.path.join(self.clusters_results_dir, image_file), dpi=600, bbox_inches='tight')
+            #print(f"Saved metrics distributions plot to: {os.path.join(self.clusters_results_dir, image_file)}")
             #plt.show()
 
         # --- 2. Connectivity graph overlaid on image ---
         if show_connectivity and "cluster_id" in df_cells.columns:
-            print("🕸️ Showing cluster connectivity graph over image...")
-            
+ 
             # prepare figure
             fig, ax = plt.subplots(figsize=(10,10))
             if img is not None:
@@ -1276,11 +1275,9 @@ class ModelInteractor:
 
             # save figure
             image_file = f"{os.path.splitext(os.path.basename(image_filename))[0]}_cluster_connectivity_overlay.png"
-            plt.savefig(os.path.join(self.clusters_results_dir, image_file), dpi=300, bbox_inches='tight')
-            print(f"Saved overlaid connectivity graph to: {os.path.join(self.clusters_results_dir, image_file)}")
+            plt.savefig(os.path.join(self.clusters_results_dir, image_file), dpi=600, bbox_inches='tight')
             plt.close(fig)
 
-        print("✅ Inspection complete.")
 
 
 

@@ -313,15 +313,15 @@ class ResultsViewer(QWidget):
             data = json.load(file)
         return data
 
+
     def check_prediction_data(self) -> None:
         """
         Check if there are any prediction images to display.
         """
-        results_dir = os.path.join(self.trial_path, "_aux_files")
-        #prediction_dir = os.path.join(results_dir, self.image_analysis_dir, "02_model_predictions")
-        #clusters_dir = os.path.join(results_dir, self.image_analysis_dir, "05_clusters_results")
-        #print(f"Checking for prediction data in: {self.prediction_dir}")
-        if not os.path.exists(self.prediction_dir):
+        # Use the correct prediction directory
+        prediction_dir = self.prediction_dir
+        #print(f"Checking for prediction data in: {prediction_dir}")
+        if not os.path.exists(prediction_dir):
             print("No data to display")
             self.close()
             return
@@ -329,6 +329,7 @@ class ResultsViewer(QWidget):
             self.prediction_images = []
             self.clusters_images = []
             instances_results_path = os.path.join(self.aux_files_dir, "image_analysis_results.json")
+            #print(f"Looking for instances results at: {instances_results_path}")
             if os.path.exists(instances_results_path):
                 instances_results = self.load_json(instances_results_path)
                 #print(f"Loaded instances results from: {instances_results_path}")
@@ -355,13 +356,11 @@ class ResultsViewer(QWidget):
             else:
                 self.next_button.setEnabled(True)
                 self.previous_button.setEnabled(True)
-            
             # If clusters images are present, ensure view toggle is enabled
             if len(self.clusters_images) == 0:
                 self.show_clusters_cb.setEnabled(False)
             else:
                 self.show_clusters_cb.setEnabled(True)
-
             self.show_figure()
             
     def get_plots_to_generate(self) -> int:
@@ -577,6 +576,7 @@ class ResultsViewer(QWidget):
         """
     
         prediction_dir = self.prediction_dir
+        
         if not os.path.exists(prediction_dir):
             print("No figures to display")
         else:
@@ -759,6 +759,7 @@ class ResultsViewer(QWidget):
             self.current_index = len(images) - 1
 
         image_file = images[self.current_index]
+        #print(f"Displaying {mode_label.lower()} image: {image_file}")
         if not os.path.exists(image_file):
             print(f"File not found: {image_file}")
             return
@@ -2056,6 +2057,7 @@ class Ui_MainPages(object):
         total_images_to_be_analyzed = 0
         for trial in trials:
             prediction_dir = os.path.join(self.imported_files_dir, trial, "01_image_analysis", "02_model_predictions")
+            print(f"Checking predictions in {prediction_dir} for trial {trial}")
             if not os.path.exists(prediction_dir):
                 os.makedirs(prediction_dir, exist_ok=True)
                 images = self.images_file_paths[trial]
@@ -2180,7 +2182,7 @@ class Ui_MainPages(object):
                     
                     if time_take_per_image != None:
                         print(f"Current progress: {current_progress} % of total of {total_images_trial} images of trial {trial}; {image_num} images analyzed, {len(images) - image_num} images remaining; total images: {total_images}")
-                        print(f"Time taken for image {image_num}: {time_take_per_image} seconds")
+                        print(f"Time taken for image {image_num}: {time_take_per_image:.2f} seconds")
    
                     #status = f"{status} ({image_num}/{len(images)})"
                     
@@ -2914,6 +2916,7 @@ class Ui_MainPages(object):
             self.results_viewer = ResultsViewer(parent=self.results_page, trial_path=trial_path, update_ui=True)
             
             if hasattr(self.results_viewer, "prediction_dir"):
+                print(f"Results viewer prediction dir: {self.results_viewer.prediction_dir}")
                 if not os.path.exists(self.results_viewer.prediction_dir):
                     # show a hint that there are no figures
                     if self.settings["language"] == "eng":

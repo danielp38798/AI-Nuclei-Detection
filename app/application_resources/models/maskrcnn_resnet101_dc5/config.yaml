@@ -255,7 +255,7 @@ MODEL:
     NAME: SemSegFPNHead
     NORM: GN
     NUM_CLASSES: 54
-  WEIGHTS: C:\Users\pod38798\Documents\GITLAB\published\AI-Nuclei-Detection\app\application_resources\models\maskrcnn_resnet101_dc5\model_best.pth
+  WEIGHTS: C:\Users\pod38798\Documents\GITHUB\AI-Nuclei-Detection\app\application_resources\models\maskrcnn_resnet101_dc5\model_best.pth
 OUTPUT_DIR: ./output
 SEED: -1
 SOLVER:
