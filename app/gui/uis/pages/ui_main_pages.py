@@ -320,7 +320,9 @@ class ResultsViewer(QWidget):
         """
         # Use the correct prediction directory
         prediction_dir = self.prediction_dir
-        #print(f"Checking for prediction data in: {prediction_dir}")
+        #print(f"[DEBUG] Checking for prediction data in: {prediction_dir}")
+        #if os.path.exists(prediction_dir):
+            #print(f"[DEBUG] Files in prediction_dir: {os.listdir(prediction_dir)}")
         if not os.path.exists(prediction_dir):
             print("No data to display")
             self.close()
@@ -329,24 +331,27 @@ class ResultsViewer(QWidget):
             self.prediction_images = []
             self.clusters_images = []
             instances_results_path = os.path.join(self.aux_files_dir, "image_analysis_results.json")
-            #print(f"Looking for instances results at: {instances_results_path}")
+            #print(f"[DEBUG] Looking for instances results at: {instances_results_path}")
             if os.path.exists(instances_results_path):
                 instances_results = self.load_json(instances_results_path)
-                #print(f"Loaded instances results from: {instances_results_path}")
-                #print(f"Instances results: {instances_results}")
+                #print(f"[DEBUG] Loaded instances results from: {instances_results_path}")
+    
                 image_data = instances_results["image_data"]
                 for image in image_data:
-                    if image_data[image] != {}:
-                        image = image.split(".")[0]
-                        # prediction image
-                        pred_file = os.path.join(self.prediction_dir, f"{image}_prediction.png")
+                    if image_data[image]:
+                        #print(f"image_data[image]: {image_data[image]}")
+                        image_base = os.path.splitext(image)[0]
+                        pred_file = os.path.join(self.prediction_dir, f"{image_base}_prediction.png")
+                        #print(f"[DEBUG] Looking for prediction file: {pred_file}")
                         if os.path.exists(pred_file) and pred_file not in self.prediction_images:
                             self.prediction_images.append(pred_file)
-                        # clusters image (optional)
-                        clusters_file = os.path.join(self.clusters_dir, f"{image}_clusters.png")
+                        
+                        # clusters image 
+                        clusters_file = os.path.join(self.clusters_dir, f"{image_base}_clusters.png")
                         if os.path.exists(clusters_file) and clusters_file not in self.clusters_images:
                             self.clusters_images.append(clusters_file)
             #print(f"Prediction images found: {len(self.prediction_images)}")
+            #print(f"[DEBUG] Prediction images found: {self.prediction_images}")
             if len(self.prediction_images) == 0:
                 print("No data to display")
                 self.close()
@@ -491,7 +496,7 @@ class ResultsViewer(QWidget):
             for class_id, class_name in self.category_name_dict.items():
                 #if "yolo" in used_model:
                 #   class_id = int(class_id) + 1 
-                #    class_id = str(class_id)
+                #   class_id = str(class_id)
                 area_of_classname = reporting.get_area_for_class(image_file_name, class_id)
                 #if "yolo" in used_model:
                 #    class_id = int(class_id) - 1
@@ -2044,7 +2049,7 @@ class Ui_MainPages(object):
             for trial in trials:
                 images.extend(self.images_file_paths[trial])
             total_images = len(images)
-            print(f"Total images to analyze: {total_images}")
+            #print(f"Total images to analyze: {total_images}")
         else:
             trials = [selected_trial]
             total_images = len(self.images_file_paths[selected_trial])
@@ -2055,20 +2060,23 @@ class Ui_MainPages(object):
         mean_time_per_trial = 0
         
         total_images_to_be_analyzed = 0
+    
         for trial in trials:
-            prediction_dir = os.path.join(self.imported_files_dir, trial, "01_image_analysis", "02_model_predictions")
-            print(f"Checking predictions in {prediction_dir} for trial {trial}")
-            if not os.path.exists(prediction_dir):
-                os.makedirs(prediction_dir, exist_ok=True)
-                images = self.images_file_paths[trial]
+            results_file = os.path.join(self.imported_files_dir, trial, "_aux_files", "image_analysis_results.json")
+            if os.path.exists(results_file):
+                with open(results_file, "r") as f:
+                    results_dict = json.load(f)
             else:
-                prediction_files = [file for file in os.listdir(prediction_dir) if file.endswith(".png")]
-                # determine the images that have not been analyzed
-                images = [image for image in self.images_file_paths[trial] if f"{os.path.splitext(os.path.basename(image))[0]}_prediction.png" not in prediction_files]
-            total_images_to_be_analyzed += len(images)
-            print(f"Total images to be analyzed in trial {trial}: {len(images)}")
+                results_dict = {}
+            images_to_analyze = 0
+            for image in self.images_file_paths[trial]:
+                base = os.path.basename(image)
+                if base not in results_dict or (isinstance(results_dict[base], dict) and not results_dict[base]):
+                    images_to_analyze += 1
+            total_images_to_be_analyzed += images_to_analyze
+            #print(f"Total images to be analyzed in trial {trial}: {images_to_analyze}")
         already_analyzed_images = total_images - total_images_to_be_analyzed
-        print(f"Total images to be analyzed: {total_images_to_be_analyzed}")
+        #print(f"Total images to be analyzed: {total_images_to_be_analyzed}")
             
             
         #for trial in trials:
@@ -2085,57 +2093,41 @@ class Ui_MainPages(object):
             predictions_dir = os.path.join(self.imported_files_dir, trial, "01_image_analysis", "02_model_predictions")
             if not os.path.exists(predictions_dir):
                 os.makedirs(predictions_dir, exist_ok=True)
-                images = all_images_of_trial
-            else:
-                # Get the list of prediction files
-                prediction_files = [file for file in os.listdir(predictions_dir) if file.endswith(".png")]
-                print(f"Prediction files: {prediction_files}")
-                # Get the list of images that have not been analyzed
-                images = [image for image in all_images_of_trial if f"{os.path.splitext(os.path.basename(image))[0]}_prediction.png" not in prediction_files]
-            print(f"Images to analyze for trial {trial}: {len(images)}")
-            print(f"images in trial {trial}: {images}")
-            
-            already_analyzed_images_in_trial = total_images_trial - len(images)
-
-            if self.settings["language"] == "eng":
-                label_text = f"Processing Import: '{trial}'"
-            elif self.settings["language"] == "de":
-                label_text = f"Import '{trial}' wird verarbeitet"
-
-            if selected_trial == "All Trials" or selected_trial == "Alle Versuche":
-                if self.settings["language"] == "eng":
-                    label_text = upper_label_text + f"\n images in all imports: {total_images} ({already_analyzed_images} already analyzed)"
-                    label_text = label_text + f"\n images in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} already analyzed)"
-                elif self.settings["language"] == "de":
-                    label_text = upper_label_text + f"\n Bilder in allen Imports: {total_images} ({already_analyzed_images} bereits analysiert)"
-                    label_text = label_text + f"\n Bilder in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} bereits analysiert)"
-            else:
-                if self.settings["language"] == "eng":
-                    label_text = upper_label_text + f"\n images in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} already analyzed)"
-                elif self.settings["language"] == "de":
-                    label_text = upper_label_text + f"\n Bilder in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} bereits analysiert)"
-
-            self.analysis_status_label.setText(label_text)
-
-            # Construct a model interface with the current trial as output directory
-            trial_dir = os.path.join(self.imported_files_dir, trial)
-            if isinstance(trial_dir, tuple):
-                trial_dir = trial_dir[0]
-
-            # Check if there already exists an image_analysis_results.json file in the trial directory
-            # If it exists, load the results dictionary from the file
-            # If it does not exist, create a new results dictionary
-            results_file = os.path.join(trial_dir, "_aux_files", "image_analysis_results.json")
+            # Load image_analysis_results.json if exists
+            results_file = os.path.join(self.imported_files_dir, trial, "_aux_files", "image_analysis_results.json")
             if os.path.exists(results_file):
-                if hasattr(self, "results_dict"):
-                    del self.results_dict
                 with open(results_file, "r") as f:
                     self.results_dict = json.load(f)
                     print(f"Results file loaded from {results_file}")
             else:
                 self.results_dict = {}
                 print(f"Results file created")
-
+            
+            # check which images has already been analyzed in the current trial and only analyze the remaining ones
+            images = []
+            already_analyzed_images_in_trial = 0
+            for image in all_images_of_trial:
+                base = os.path.basename(image)
+                #print(f"[DEBUG] Checking image: {base} in trial: {trial}")
+                # Only analyze if base not in results_dict, or if '1' not in results_dict[base], or if results_dict[base]['1'] is empty
+                already_analyzed = False
+                if self.results_dict != {}:
+                    if base in self.results_dict['image_data']:
+                        #print(f"[DEBUG] Found base in results_dict: {base}")
+                        #print(f"[DEBUG] self.results_dict[base]: {self.results_dict['image_data'][base]}")
+                        # Check for key '1' (string) and that it is non-empty
+                        if '1' in self.results_dict['image_data'][base] and self.results_dict['image_data'][base]['1']:
+                            already_analyzed = True
+                if already_analyzed:
+                    already_analyzed_images_in_trial += 1
+                    already_analyzed_images += 1
+                else:
+                    images.append(image)
+            print(f"Total images in trial '{trial}': {total_images_trial}")
+            print(f"Images to analyze in trial '{trial}': {len(images)}")
+            print(f"Already analyzed images in trial '{trial}': {already_analyzed_images_in_trial}")
+            #print(f"[DEBUG] images list for trial '{trial}': {images}")
+    
             # If the process has not been stopped, run the inference passing None as the results_dict
             if hasattr(self, "model_interface"):
                 del self.model_interface
@@ -2146,6 +2138,8 @@ class Ui_MainPages(object):
             elif self.settings["language"] == "de":
                 status = f"ETA wird berechnet ..."
             self.analysis_eta_label.setText(status)
+            
+            trial_dir = os.path.join(self.imported_files_dir, trial)
 
             if hasattr(self, "instances_dict"):
                 self.model_interface = ModelInteractor(
@@ -2164,14 +2158,14 @@ class Ui_MainPages(object):
                     results_dict=self.results_dict,
                     analysis_thread_should_stop=self.analysis_thread_should_stop
                 )
+                
             
 
                 for image_num, process, status, results_dict, time_take_per_image in gen_return:
                     if self.analysis_thread_should_stop:
                         print("Analysis stopped")
                         break
-                    
-                    
+                                    
                     # Update the status label
                     self.analysis_status_label_2.setText(status)
                  
@@ -2186,19 +2180,14 @@ class Ui_MainPages(object):
    
                     #status = f"{status} ({image_num}/{len(images)})"
                     
-                    
-                    if selected_trial == "All Trials" or selected_trial == "Alle Versuche":
-                        if self.settings["language"] == "eng":
-                            label_text = upper_label_text + f"\n Images in all imports: {total_images} ({already_analyzed_images} already analyzed)"
-                            label_text = label_text + f"\n images to analyse in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} already analyzed)"
-                        elif self.settings["language"] == "de":
-                            label_text = upper_label_text + f"\n Bilder in allen Imports: {total_images} ({already_analyzed_images} bereits analysiert)"
-                            label_text = label_text + f"\n Bilder in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} bereits analysiert)"
-                    else:
-                        if self.settings["language"] == "eng":
-                            label_text = upper_label_text + f"\n Images in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} already analyzed)"
-                        elif self.settings["language"] == "de":
-                            label_text = upper_label_text + f"\n Bilder in '{trial}': {total_images_trial} ({already_analyzed_images_in_trial} bereits analysiert)"
+                
+                    if self.settings["language"] == "eng":
+                        label_text = upper_label_text + f"\n images in all imports: {total_images} ({already_analyzed_images} already analyzed)"
+                        label_text = label_text + f"\n images in '{trial}': {total_images_trial} ({already_analyzed_images} already analyzed)"
+                    elif self.settings["language"] == "de":
+                        label_text = upper_label_text + f"\n Bilder in allen Imports: {total_images} ({already_analyzed_images} bereits analysiert)"
+                        label_text = label_text + f"\n Bilder in '{trial}': {total_images_trial} ({already_analyzed_images} bereits analysiert)"
+
                     #label_text = f"{label_text} \n {status} ({image_num}/{len(images)})"
                     self.analysis_status_label.setText(label_text)
                     
@@ -2207,7 +2196,7 @@ class Ui_MainPages(object):
                         
                         #print(f"time needed for image {image_num}: {np.round(time_take_per_image, 2)} seconds")
                         print(f"Images to analyze in '{trial}': {len(images)}")
-                        print(f"Images analyzed in '{trial}': {already_analyzed_images_in_trial}")
+                        #print(f"Images analyzed in '{trial}': {already_analyzed_images_in_trial}")
                         print(f"Images to analyze in all imports: {total_images} ({already_analyzed_images} already analyzed)")
                         images_remaining = total_images - already_analyzed_images
                         print(f"Images remaining: {images_remaining}")
@@ -2227,11 +2216,12 @@ class Ui_MainPages(object):
                         elif self.settings["language"] == "de":
                             eta_text = f"Voraussichtliche verbleibende Zeit (insgesamt): {eta_text}"
                         self.analysis_eta_label.setText(eta_text)
+                        already_analyzed_images += 1
+                        already_analyzed_images_in_trial += 1
                     else:
                         yield image_num, process, status, results_dict, 0
                         
-                already_analyzed_images_in_trial += 1
-                already_analyzed_images += 1
+          
 
                     
                     # mean time per image
@@ -2760,6 +2750,7 @@ class Ui_MainPages(object):
             
 
     
+
     def generate_report_function(self, trial_dirs: List[str], unit: str, language: str) -> Generator[Tuple[int, str, str, bool], None, None]:
         """
         Generate a report for a single trial.
@@ -2831,12 +2822,21 @@ class Ui_MainPages(object):
             None
         """
         if self.view_results_btn.text() == "View Results":
+            # Always remove any existing ResultsViewer before opening a new one
+            if hasattr(self, "results_viewer") and self.results_viewer is not None:
+                #self.results_viewer.close()
+                self.results_page_layout.removeWidget(self.results_viewer)
+                self.results_viewer.deleteLater()
+                self.results_viewer = None
             self.open_results_viewer()
         else:
             self.view_results_btn.setText("View Results")
             self.view_results_btn.setIcon(QIcon(Functions.set_svg_icon("view_icon.svg")))
-            if hasattr(self, "results_viewer"):
-                self.results_viewer.close()
+            if hasattr(self, "results_viewer") and self.results_viewer is not None:
+                #self.results_viewer.close()
+                self.results_page_layout.removeWidget(self.results_viewer)
+                self.results_viewer.deleteLater()
+                self.results_viewer = None
                 
     def open_results_viewer(self) -> None:
         """
@@ -2887,7 +2887,7 @@ class Ui_MainPages(object):
                 self.view_results_btn.setIcon(QIcon(Functions.set_svg_icon("hide_icon.svg")))
         
                 # if the results viewer is already open, close it
-                if hasattr(self, "results_viewer"):
+                if hasattr(self, "results_viewer") and self.results_viewer is not None:
                     self.results_viewer.close()
                     # remove it from the layout
                     self.results_page_layout.removeWidget(self.results_viewer)
@@ -2905,18 +2905,20 @@ class Ui_MainPages(object):
             self.view_results_btn.setText("Hide Results")
             self.view_results_btn.setIcon(QIcon(Functions.set_svg_icon("hide_icon.svg")))
                 
-            if hasattr(self, "results_viewer"):
-                self.results_viewer.close()
-                self.results_page_layout.removeWidget(self.results_viewer)
+            if hasattr(self, "results_viewer") and self.results_viewer is not None:
+                self.results_viewer.deleteLater()
+                self.results_viewer = None
+            else: 
+                self.results_viewer = None
+            
             
             trial_path = os.path.join(self.imported_files_dir, selected_trial)
             if isinstance(trial_path, tuple):
                 trial_path = trial_path[0]
-
+            #print(f"[DEBUG] Opening results viewer for trial path: {trial_path}")
             self.results_viewer = ResultsViewer(parent=self.results_page, trial_path=trial_path, update_ui=True)
             
             if hasattr(self.results_viewer, "prediction_dir"):
-                print(f"Results viewer prediction dir: {self.results_viewer.prediction_dir}")
                 if not os.path.exists(self.results_viewer.prediction_dir):
                     # show a hint that there are no figures
                     if self.settings["language"] == "eng":
@@ -2953,6 +2955,7 @@ class Ui_MainPages(object):
                 
    
     
+                
                 
                 
                 
@@ -3233,16 +3236,27 @@ class Ui_MainPages(object):
             trial_dir = os.path.join(self.imported_files_dir, trial)
             if self.settings["language"] == "eng":
                 text = f"Deleting predictions for trial {trial}" + f" ({idx + 1}/{len(self.get_trial_folders())})"
-                self.data_management_status_label.setText(text)
             elif self.settings["language"] == "de":
-                text = f"Prognosen für Versuch {trial} werden gelöscht" + f" ({idx + 1}/{len(self.get_trial_folders())})"
-                self.data_management_status_label.setText(text)
+                text = f"Prognosen für Versuch {trial}" + f" ({idx + 1}/{len(self.get_trial_folders())})"
+            process = int((idx) / len(self.get_trial_folders()) * 100)
+            yield process, text
+
+            trial_name = os.path.basename(trial_dir)
             
-            predictions_dir = os.path.join(trial_dir, "predictions")
-            if os.path.exists(predictions_dir):
-                shutil.rmtree(predictions_dir)
-            progress = (idx + 1) / len(self.get_trial_folders()) * 100
-            yield progress, f"Predictions deleted successfully for {trial}"
+            final_destination_dir = os.path.join(destination_dir, trial_name)
+            if not os.path.exists(final_destination_dir):
+                os.makedirs(final_destination_dir)
+            # Copy the results to the selected directory
+            shutil.copytree(trial_dir, final_destination_dir, dirs_exist_ok=True)
+
+        # Set the final status
+        if self.settings["language"] == "eng":
+            final_status = "Export completed"
+        elif self.settings["language"] == "de":
+            final_status = "Export abgeschlossen"
+        else:
+            final_status = "Export completed"
+        yield 100, final_status
         
     def delete_predictions_finished_slot(self, value: bool) -> None:
         """
@@ -3883,7 +3897,6 @@ class Ui_MainPages(object):
             bg_color_pressed=self.themes["app_color"]["dark_four"])
         self.stop_training_btn.setGeometry(QtCore.QRect(25, 25, 400, 200))
         self.trainer_page_layout.addWidget(self.stop_training_btn, 0, Qt.AlignCenter)
-        self.trainer_page_layout.setSpacing(50)
         self.stop_training_btn.clicked.connect(self.stop_training)
 
         self.stop_training_btn_icon = QIcon(Functions.set_svg_icon("stop_icon.svg"))
@@ -4018,7 +4031,7 @@ class Ui_MainPages(object):
         for time_left in trainer_object.run():
             yield time_left, "Training model on trial"
         #trainer_object.run()
-    '''    
+    '''
 
     def retranslateUi(self, MainPages: QWidget) -> None:
         """
@@ -4067,7 +4080,7 @@ class Ui_MainPages(object):
 
             self.datamanagement_page_label.setText(QCoreApplication.translate("MainPages", u"Datenverwaltung", None))
             self.trial_selection_label_datamanagement.setText(QCoreApplication.translate("MainPages", u"W\u00e4hlen Sie einen Versuch aus, um ihn zu verwalten", None))
-            self.delete_trial_btn.setText(QCoreApplication.translate("MainPages", u"Versuch l\u00f6schen", None))
+            self.delete_trial_btn.setText(QCoreApplication.translate("MainPages", u"Versuch löschen", None))
 
             #self.trainer_page_label.setText(QCoreApplication.translate("MainPages", u"Trainerseite", None))
             #self.trial_selection_label_trainer.setText(QCoreApplication.translate("MainPages", u"W\u00e4hlen Sie einen Versuch aus, um das KI-Modell darauf zu trainieren", None))
