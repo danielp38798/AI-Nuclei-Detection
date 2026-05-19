@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: If you use this software, please cite both the article from preferred-citation and the software itself.
+authors:
+  - family-names: "Pointner"
+    given-names: "Daniel"
+    orcid: "https://orcid.org/0009-0003-2299-0367"
+  - family-names: "Kranz"
+    given-names: "Michael"
+    orcid: "https://orcid.org/0000-0001-7759-9830"
+  - family-names: "Wagner"
+    given-names: "Maria Stella"
+    orcid: "https://orcid.org/0000-0002-1980-7563"
+  - family-names: "Haus"
+    given-names: "Moritz"
+    orcid: "https://orcid.org/0009-0005-2512-7475"
+  - family-names: "Lehle"
+    given-names: "Karla"
+    orcid: "https://orcid.org/0000-0001-8856-4094"
+  - family-names: "Krenkel"
+    given-names: "Lars"
+    orcid: "https://orcid.org/0000-0002-6275-3505"
+title: Automated deep learning based detection of cellular deposits on clinically used ECMO membrane lungs
+version: 1.0.0
+url: https://www.frontiersin.org/journals/bioinformatics/articles/10.3389/fbinf.2026.1771574
+doi: 10.3389/fbinf.2026.1771574
+date-released: '2026-04-01'
+preferred-citation:
+  authors:
+    - family-names: "Pointner"
+      given-names: "Daniel"
+    - family-names: "Kranz"
+      given-names: "Michael"
+    - family-names: "Wagner"
+      given-names: "Maria Stella"
+    - family-names: "Haus"
+      given-names: "Moritz"
+    - family-names: "Lehle"
+      given-names: "Karla"
+    - family-names: "Krenkel"
+      given-names: "Lars"
+  title: Automated deep learning based detection of cellular deposits on clinically used ECMO membrane lungs
+  doi: 10.3389/fbinf.2026.1771574
+  url: https://www.frontiersin.org/journals/bioinformatics/articles/10.3389/fbinf.2026.1771574
+  type: article-journal
+  year: '2026'
+  conference: {}
+  publisher: {}
